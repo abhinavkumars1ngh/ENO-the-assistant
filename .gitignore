@@ -1,0 +1,36 @@
+# Environments
+venv312/
+venv/
+env/
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Models & Heavy weights
+mlx_models/
+qwen_local_weights/
+whisper-tiny-mlx/
+bge_model/
+reranker_model/
+*.safetensors
+*.bin
+*.onnx
+*.dylib
+*.metallib
+*.node
+
+# Node
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# Logs & DBs
+*.log
+storage/
+cookies*.json
+.vscode/
+.DS_Store
