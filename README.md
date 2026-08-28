@@ -1,4 +1,4 @@
-# ENO — Local-First AI Assistant 🧠⚡
+# ENO - Local-First AI Assistant 
 
 [![Next.js](https://img.shields.io/badge/Next.js-black?style=flat&logo=next.js)](https://nextjs.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
