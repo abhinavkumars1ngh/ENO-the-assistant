@@ -104,7 +104,7 @@ ENO currently supports natively locally hosted models including **Gemma 2** and 
 Running massive LLMs locally creates an immediate memory bottleneck. To make this practical on edge hardware, ENO uses **4-bit quantized variants** (e.g., `gemma-2-2b-it-4bit`). This slashes the memory footprint down to ~1.6GB, keeping local inference snappy and leaving room for the Vector DB and OS.
 
 ### 🗄 Memory & Retrieval (Qdrant & Redis)
-* **Qdrant:** Provides the vector storage layer for RAG (Retrieval-Augmented Generation). Conversations and coding styles are embedded as vectors. When a new query arrives, relevant historical context is retrieved via Cosine Similarity and injected into the LLM prompt.
+* **Qdrant:** Provides the vector storage layer. Currently, basic conversational memory is embedded as vectors. When a new query arrives, relevant historical chat context is retrieved via Cosine Similarity and injected into the LLM prompt. *(Note: The document ingestion side of the RAG pipeline—processing PDFs, codebases, and external files—is actively under development).*
 * **Redis:** Used for fast transient application state and supporting backend operations, allowing Qdrant to focus strictly on semantic retrieval.
 
 ### 🎙 Voice
@@ -176,7 +176,7 @@ ENO is an actively developing experiment in understanding end-to-end AI systems.
 - [x] 4-bit Quantized inference
 - [x] Real-time WebSocket token streaming
 - [x] Local Voice input (Whisper)
-- [x] Vector storage / RAG (Qdrant)
+- [x] Vector storage & Conversational Memory (Qdrant)
 - [x] Redis state integration
 - [x] Web search (DuckDuckGo Lite)
 - [x] Multi-service automated orchestration
