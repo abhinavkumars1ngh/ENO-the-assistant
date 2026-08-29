@@ -30,13 +30,13 @@ def classify_query(message: str) -> dict:
     ]
     
     if any(kw in msg_lower for kw in casual_keywords) and len(msg_lower) < 40:
-        return {"max_tokens": 150, "temp": 0.8, "effort": "low"}
+        return {"max_tokens": 8192, "temp": 0.8, "effort": "low"}
     elif any(kw in msg_lower for kw in code_keywords):
-        return {"max_tokens": 2048, "temp": 0.4, "effort": "code"}
+        return {"max_tokens": 8192, "temp": 0.4, "effort": "code"}
     elif any(kw in msg_lower for kw in explain_keywords):
-        return {"max_tokens": 1024, "temp": 0.6, "effort": "high"}
+        return {"max_tokens": 8192, "temp": 0.6, "effort": "high"}
     else:
-        return {"max_tokens": 512, "temp": 0.75, "effort": "medium"}
+        return {"max_tokens": 8192, "temp": 0.75, "effort": "medium"}
 
 
 class ConversationEngine:
