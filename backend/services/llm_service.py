@@ -112,7 +112,8 @@ class LLMService:
             # If the decoded text ends with a replacement character (U+FFFD),
             # it means we have an incomplete multi-byte UTF-8 sequence (like an emoji).
             # We skip yielding and hold the buffer until the next token completes the character.
-            if not new_chunk or current_text.endswith('\ufffd'):
+            # We also hold the buffer if we hit a partial stop token string!
+            if not new_chunk or current_text.endswith('\ufffd') or any(current_text.endswith(p) for p in ["<end_of", "<start_of", "<|im_", "<|end", "<eos"]):
                 tokens_generated += 1
                 await asyncio.sleep(0)
                 continue
