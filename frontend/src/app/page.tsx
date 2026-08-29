@@ -96,6 +96,81 @@ function Modal({ title, isOpen, onClose, children }: { title: string, isOpen: bo
     </div>
   );
 }
+function PdfUploader() {
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [status, setStatus] = useState<{type: 'success' | 'error', msg: string} | null>(null);
+
+  const handleUpload = async () => {
+    if (!file) return;
+    setUploading(true);
+    setStatus(null);
+    
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("course", "Knowledge Base");
+    formData.append("title", file.name);
+
+    try {
+      const res = await fetch(`${API_URL}/api/ingest/pdf`, {
+        method: "POST",
+        body: formData,
+        headers: NGROK_HEADERS
+      });
+      if (res.ok) {
+        setStatus({type: 'success', msg: 'Document successfully ingested to Qdrant Vector DB!'});
+        setFile(null);
+      } else {
+        setStatus({type: 'error', msg: 'Failed to upload document.'});
+      }
+    } catch (e) {
+      setStatus({type: 'error', msg: 'Error uploading document.'});
+    }
+    setUploading(false);
+  };
+
+  return (
+    <div className="space-y-4 px-2">
+      <div className="border-2 border-dashed border-zinc-700/50 bg-zinc-900/50 rounded-xl p-6 text-center hover:border-indigo-500/50 transition-colors">
+        <input 
+          type="file" 
+          accept=".pdf" 
+          onChange={(e) => setFile(e.target.files?.[0] || null)}
+          className="hidden" 
+          id="pdf-upload"
+        />
+        <label htmlFor="pdf-upload" className="cursor-pointer flex flex-col items-center">
+          <BookOpen className="w-10 h-10 text-indigo-500/70 mb-3" />
+          <span className="text-zinc-300 font-medium">
+            {file ? file.name : "Click to select a PDF"}
+          </span>
+          <span className="text-zinc-500 text-xs mt-1">Upload resumes, syllabi, or docs for RAG</span>
+        </label>
+      </div>
+      
+      {status && (
+        <div className={`p-3 rounded-lg text-xs font-medium text-center ${status.type === 'success' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+          {status.msg}
+        </div>
+      )}
+
+      <button
+        onClick={handleUpload}
+        disabled={!file || uploading}
+        className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-2 shadow-lg"
+      >
+        {uploading ? (
+           <>
+            <span className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin"/>
+            Chunking & Embedding...
+           </>
+        ) : (
+          "Upload to Knowledge Base"
+        )}
+      </button>
+    </div>
+  );
+}
 
 export default function Home() {
   const [chats, setChats] = useState<ChatSession[]>([]);
@@ -521,9 +596,8 @@ export default function Home() {
       </Modal>
 
       <Modal title="Courses (Knowledge Base)" isOpen={activeModal === "courses"} onClose={() => setActiveModal(null)}>
-        <div className="text-zinc-400 text-sm text-center py-8">
-          <BookOpen className="w-12 h-12 text-zinc-600 mx-auto mb-3" />
-          <p>Upload PDFs, slides, and video links to create personalized local courses.<br/>(UI Implementation coming soon)</p>
+        <div className="py-2">
+          <PdfUploader />
         </div>
       </Modal>
 
