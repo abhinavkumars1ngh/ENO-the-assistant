@@ -191,6 +191,7 @@ export default function Home() {
   const [activeModel, setActiveModel] = useState<"standard" | "bro">("standard");
   
   const [input, setInput] = useState("");
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -378,40 +379,70 @@ export default function Home() {
   }, [isGenerating, isVoiceModeOpen, messages]);
 
   const [isUploadingChatFile, setIsUploadingChatFile] = useState(false);
-  const handleChatFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !currentChatId) return;
-    setIsUploadingChatFile(true);
-    
-    // Optimistically show system message
-    setMessages(prev => [...prev, { role: "assistant", text: `[System] Uploading and processing ${file.name} for this chat...` }]);
-    
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("chat_id", currentChatId);
-
-    try {
-      const res = await fetch(`${API_URL}/api/ingest/chat_file`, {
-        method: "POST",
-        body: formData,
-        headers: NGROK_HEADERS
-      });
-      if (res.ok) {
-        setMessages(prev => [...prev.slice(0, -1), { role: "assistant", text: `[System] ✅ Successfully uploaded **${file.name}**. You can now ask questions about it.` }]);
-      } else {
-        setMessages(prev => [...prev.slice(0, -1), { role: "assistant", text: `[System] ❌ Failed to upload ${file.name}.` }]);
-      }
-    } catch (e) {
-      setMessages(prev => [...prev.slice(0, -1), { role: "assistant", text: `[System] ❌ Error uploading ${file.name}.` }]);
+  
+  const handleChatFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      setPendingFiles(prev => [...prev, ...Array.from(e.target.files as FileList)]);
     }
-    setIsUploadingChatFile(false);
+  };
+  
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf('image') !== -1) {
+        const file = items[i].getAsFile();
+        if (file) files.push(file);
+      }
+    }
+    if (files.length > 0) {
+      setPendingFiles(prev => [...prev, ...files]);
+    }
   };
 
-  const sendMessage = () => {
-    if (!input.trim() || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || isGenerating) return;
+  const removePendingFile = (index: number) => {
+    setPendingFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const sendMessage = async () => {
+    if ((!input.trim() && pendingFiles.length === 0) || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || isGenerating) return;
     setIsGenerating(true);
-    wsRef.current.send(JSON.stringify({ type: "text", content: input, model: activeModel }));
-    setMessages((prev) => [...prev, { role: "user", text: input }]);
+    
+    let currentInput = input;
+    
+    if (pendingFiles.length > 0) {
+      setIsUploadingChatFile(true);
+      setMessages((prev) => [...prev, { role: "assistant", text: `[System] Processing ${pendingFiles.length} file(s)...` }]);
+      
+      for (const file of pendingFiles) {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("chat_id", currentChatId!);
+        try {
+          await fetch(`${API_URL}/api/ingest/chat_file`, {
+            method: "POST",
+            body: formData,
+            headers: NGROK_HEADERS
+          });
+        } catch (e) {
+          console.error("Failed to upload", file.name);
+        }
+      }
+      
+      // Remove system message
+      setMessages((prev) => prev.slice(0, -1));
+      
+      if (!currentInput.trim()) {
+        currentInput = `[User attached ${pendingFiles.length} file(s)]`;
+      }
+      
+      setPendingFiles([]);
+      setIsUploadingChatFile(false);
+    }
+
+    wsRef.current.send(JSON.stringify({ type: "text", content: currentInput, model: activeModel }));
+    setMessages((prev) => [...prev, { role: "user", text: currentInput }]);
     setInput("");
   };
 
@@ -596,38 +627,57 @@ export default function Home() {
               </button>
             </div>
           </div>
-          <div className="max-w-3xl mx-auto flex gap-2 items-center p-1.5 rounded-2xl bg-zinc-900 focus-within:ring-1 focus-within:ring-indigo-500/50">
-            <input 
-              type="file" 
-              accept=".pdf,.png,.jpg,.jpeg,.webp,.heic" 
-              onChange={handleChatFileUpload}
-              className="hidden" 
-              id="chat-file-upload"
-              disabled={isUploadingChatFile || !isConnected}
-            />
-            <label htmlFor="chat-file-upload" className={`p-2.5 rounded-xl cursor-pointer transition-colors ${isUploadingChatFile ? "text-indigo-400 animate-pulse" : "text-zinc-400 hover:text-white"}`}>
-              <Paperclip className="w-5 h-5" />
-            </label>
-            <button onClick={isRecording ? stopRecording : startRecording} className={`p-2.5 rounded-xl transition-colors ${isRecording ? "bg-red-500 text-white animate-pulse" : "text-zinc-400 hover:text-white"}`}>
-              {isRecording ? <Square className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-            </button>
-            <TextareaAutosize
-              className="flex-1 bg-transparent text-white px-2 py-2.5 focus:outline-none placeholder:text-zinc-600 resize-none"
-              placeholder={!isConnected ? "Reconnecting..." : isRecording ? "Recording audio..." : "Message Eno..."}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  sendMessage();
-                }
-              }}
-              disabled={isGenerating || isRecording || !isConnected}
-              maxRows={8}
-            />
-            <button onClick={sendMessage} disabled={!input.trim() || isGenerating || !isConnected} className="p-2.5 bg-indigo-600 text-white rounded-xl disabled:opacity-30">
-              <Send className="w-4 h-4" />
-            </button>
+          <div className="max-w-3xl mx-auto flex gap-2 items-center p-1.5 rounded-2xl bg-zinc-900 focus-within:ring-1 focus-within:ring-indigo-500/50 flex-col">
+            {pendingFiles.length > 0 && (
+              <div className="flex gap-2 w-full p-2 overflow-x-auto flex-wrap border-b border-white/5 pb-3">
+                {pendingFiles.map((file, i) => (
+                  <div key={i} className="relative group bg-zinc-800 rounded-lg p-2 flex items-center gap-2 text-xs text-zinc-300 w-fit">
+                    <Paperclip className="w-4 h-4 text-indigo-400" />
+                    <span className="truncate max-w-[100px]">{file.name}</span>
+                    <button 
+                      onClick={() => removePendingFile(i)}
+                      className="absolute -top-1.5 -right-1.5 bg-zinc-700 hover:bg-red-500 rounded-full p-0.5 text-white shadow-lg transition-colors"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-2 items-center w-full">
+              <input 
+                type="file" 
+                accept=".pdf,.png,.jpg,.jpeg,.webp,.heic" 
+                onChange={handleChatFileUpload}
+                className="hidden" 
+                id="chat-file-upload"
+                disabled={isUploadingChatFile || !isConnected}
+              />
+              <label htmlFor="chat-file-upload" className={`p-2.5 rounded-xl cursor-pointer transition-colors ${isUploadingChatFile ? "text-indigo-400 animate-pulse" : "text-zinc-400 hover:text-white"}`}>
+                <Paperclip className="w-5 h-5" />
+              </label>
+              <button onClick={isRecording ? stopRecording : startRecording} className={`p-2.5 rounded-xl transition-colors ${isRecording ? "bg-red-500 text-white animate-pulse" : "text-zinc-400 hover:text-white"}`}>
+                {isRecording ? <Square className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+              </button>
+              <TextareaAutosize
+                className="flex-1 bg-transparent text-white px-2 py-2.5 focus:outline-none placeholder:text-zinc-600 resize-none"
+                placeholder={!isConnected ? "Reconnecting..." : isRecording ? "Recording audio..." : "Message Eno..."}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onPaste={handlePaste}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                  }
+                }}
+                disabled={isGenerating || isRecording || !isConnected}
+                maxRows={8}
+              />
+              <button onClick={sendMessage} disabled={(!input.trim() && pendingFiles.length === 0) || isGenerating || !isConnected} className="p-2.5 bg-indigo-600 text-white rounded-xl disabled:opacity-30">
+                <Send className="w-4 h-4" />
+              </button>
+            </div>
             <button 
               onClick={() => setIsVoiceModeOpen(true)} 
               disabled={isGenerating || !isConnected} 

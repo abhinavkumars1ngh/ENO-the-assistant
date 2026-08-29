@@ -90,9 +90,9 @@ async def upload_chat_file(chat_id: str = Form(...), file: UploadFile = File(...
     
     ext = file.filename.lower().split('.')[-1]
     if ext in ['pdf']:
-        process_pdf_task.delay(file_path, "Chat Context", file.filename, chat_id=chat_id)
+        process_pdf_task(file_path, "Chat Context", file.filename, chat_id=chat_id)
     elif ext in ['png', 'jpg', 'jpeg', 'webp', 'heic']:
-        process_image_task.delay(file_path, chat_id=chat_id)
+        process_image_task(file_path, chat_id=chat_id)
     else:
         return {"error": "Unsupported file format"}
         
