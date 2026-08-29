@@ -11,13 +11,14 @@ def cleanup(signum, frame):
     for p in processes:
         if p.poll() is None:
             try:
-                p.terminate()
+                p.kill()
             except Exception:
                 pass
                 
     # Force kill any orphaned processes (like Next.js node instances)
-    subprocess.run(["pkill", "-f", "ngrok http"], capture_output=True)
-    subprocess.run(["pkill", "-f", "caffeinate"], capture_output=True)
+    subprocess.run(["pkill", "-9", "-f", "ngrok http"], capture_output=True)
+    subprocess.run(["pkill", "-9", "-f", "caffeinate"], capture_output=True)
+    subprocess.run(["pkill", "-9", "-f", "uvicorn backend.main:app"], capture_output=True)
     try:
         kill_port(8000)
         kill_port(3000)
@@ -25,7 +26,7 @@ def cleanup(signum, frame):
         pass # In case kill_port isn't parsed yet
         
     print("[Eno AI] Cleanup complete. Mac will now be allowed to sleep. Exiting.")
-    sys.exit(0)
+    os._exit(0)
 
 # Register signal handlers for clean exit
 signal.signal(signal.SIGINT, cleanup)
