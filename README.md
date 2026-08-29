@@ -103,16 +103,16 @@ ENO currently supports natively locally hosted models including **Gemma 2** and 
 ### Quantization
 Running massive LLMs locally creates an immediate memory bottleneck. To make this practical on edge hardware, ENO uses **4-bit quantized variants** (e.g., `gemma-2-2b-it-4bit`). This slashes the memory footprint down to ~1.6GB, keeping local inference snappy and leaving room for the Vector DB and OS.
 
-### Memory & Retrieval (Qdrant & Redis)
-* **Qdrant:** Provides the vector storage layer. Currently, basic conversational memory is embedded as vectors. When a new query arrives, relevant historical chat context is retrieved via Cosine Similarity and injected into the LLM prompt. *(Note: The document ingestion side of the RAG pipeline—processing PDFs, codebases, and external files—is actively under development).*
-* **Redis:** Used for fast transient application state and supporting backend operations, allowing Qdrant to focus strictly on semantic retrieval.
+### Memory & RAG (Qdrant & Redis)
+* **Qdrant:** Provides the vector storage layer. It houses the global knowledge base (e.g. course PDFs) and conversational memory. When a query is made, relevant context is retrieved via Cosine Similarity (`bge-small` embeddings), mathematically reranked using a highly accurate Cross-Encoder (`bge-reranker-base`), and injected into the prompt. ENO also supports ChatGPT-style chat-specific context attachments (PDFs and clipboard screenshots via Apple Native Vision OCR) which bypass similarity search and inject directly into the immediate conversation context.
+* **Redis:** Used as a message broker for Celery backend operations (offloading heavy background PDF chunking/OCR tasks), keeping the API fully asynchronous.
 
 ### Voice
 ENO supports voice interaction through a fully local speech-processing pipeline using **Whisper**.
 `Microphone` → `Audio` → `Whisper` → `Text Transcript` → `Normal ENO Pipeline`
 
 ### Web Search
-ENO can break out of its local bounds using DuckDuckGo Lite. The assistant smartly distinguishes between its *Local Knowledge* and *Web Search*, preventing it from being strictly limited to its localized parametric memory.
+ENO can break out of its local bounds using a robust 4-tier fallback search pipeline (`DuckDuckGo Lite` → `DuckDuckGo Search` → `SearXNG` → `Parallel AI`). The assistant smartly distinguishes between its *Local Knowledge* and *Web Search*, preventing it from being strictly limited to its localized parametric memory.
 
 ### Real-Time Streaming
 Instead of forcing the user to wait for the entire response to generate, ENO streams the output out of the LLM token-by-token.
@@ -178,13 +178,15 @@ ENO is an actively developing experiment in understanding end-to-end AI systems.
 - [x] Local Voice input (Whisper)
 - [x] Vector storage & Conversational Memory (Qdrant)
 - [x] Redis state integration
-- [x] Web search (DuckDuckGo Lite)
+- [x] Web search 4-tier fallback pipeline (DuckDuckGo Lite → DuckDuckGo Search → SearXNG → Parallel AI)
 - [x] Multi-service automated orchestration
 - [x] Remote frontend → local backend Ngrok workflow
+- [x] Robust RAG document ingestion (PDFs via PyMuPDF → chunks → bge-small embeddings → Qdrant)
+- [x] Apple Native Vision OCR (Lightning-fast screenshot ingestion directly from the clipboard via Mac neural engine)
+- [x] Cross-Encoder Reranking (`bge-reranker-base`) for highly accurate context injection
+- [x] ChatGPT-style UI for chat-specific file RAG context and LaTeX math rendering
 
 **In Progress:**
-- [ ] Robust document ingestion (PDFs → chunks → embeddings → Qdrant)
-- [ ] Improved multi-hop RAG pipeline
 - [ ] Expanded function-calling and tool integrations
 - [ ] Robust deployment/build workflow
 
