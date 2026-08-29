@@ -89,14 +89,15 @@ async def upload_chat_file(chat_id: str = Form(...), file: UploadFile = File(...
         shutil.copyfileobj(file.file, buffer)
     
     ext = file.filename.lower().split('.')[-1]
+    extracted_text = ""
     if ext in ['pdf']:
         process_pdf_task(file_path, "Chat Context", file.filename, chat_id=chat_id)
     elif ext in ['png', 'jpg', 'jpeg', 'webp', 'heic']:
-        process_image_task(file_path, chat_id=chat_id)
+        extracted_text = process_image_task(file_path, chat_id=chat_id)
     else:
         return {"error": "Unsupported file format"}
         
-    return {"message": "Chat file ingestion started", "filename": file.filename}
+    return {"message": "Chat file ingestion started", "filename": file.filename, "extracted_text": extracted_text}
 
 @router.post("/ingest/video")
 async def ingest_video(course: str = Form(...), video_url: str = Form(...)):

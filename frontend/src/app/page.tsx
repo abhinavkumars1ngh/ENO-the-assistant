@@ -420,11 +420,17 @@ export default function Home() {
         formData.append("file", file);
         formData.append("chat_id", currentChatId!);
         try {
-          await fetch(`${API_URL}/api/ingest/chat_file`, {
+          const res = await fetch(`${API_URL}/api/ingest/chat_file`, {
             method: "POST",
             body: formData,
             headers: NGROK_HEADERS
           });
+          if (res.ok) {
+             const data = await res.json();
+             if (data.extracted_text) {
+                currentInput += `\n\n[OCR from attached file ${file.name}]:\n${data.extracted_text}`;
+             }
+          }
         } catch (e) {
           console.error("Failed to upload", file.name);
         }
@@ -433,8 +439,8 @@ export default function Home() {
       // Remove system message
       setMessages((prev) => prev.slice(0, -1));
       
-      if (!currentInput.trim()) {
-        currentInput = `[User attached ${pendingFiles.length} file(s)]`;
+      if (!input.trim()) {
+        currentInput = `[User attached ${pendingFiles.length} file(s)]\n` + currentInput;
       }
       
       setPendingFiles([]);

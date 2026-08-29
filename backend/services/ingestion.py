@@ -65,7 +65,7 @@ def process_image_task(file_path: str, chat_id: str = None):
         
         if not text.strip():
             print(f"No text found in image {file_path}")
-            return
+            return ""
             
         vector = embedding_service.embed_text(text)
         point_id = str(uuid.uuid4())
@@ -91,8 +91,10 @@ def process_image_task(file_path: str, chat_id: str = None):
             ]
         )
         print(f"Finished OCR processing: {file_path}")
+        return text
     except Exception as e:
         print(f"OCR Error on {file_path}: {e}")
+        return ""
 
 @celery_app.task
 def process_video_task(video_url: str, course: str):
