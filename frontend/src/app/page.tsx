@@ -194,25 +194,27 @@ export default function Home() {
   const audioChunksRef = useRef<Blob[]>([]);
   const lastSpokenIndexRef = useRef<number>(-1);
 
-  // Fetch initial chats
-  useEffect(() => {
-    fetchChats();
-  }, []);
-
   const fetchChats = async () => {
     try {
       const res = await fetch(`${API_URL}/api/chats`, { headers: NGROK_HEADERS });
-      const data = await res.json();
-      setChats(data.chats);
-      if (data.chats.length > 0 && !currentChatId) {
-        setCurrentChatId(data.chats[0].id);
-      } else if (data.chats.length === 0) {
-        createNewChat();
+      if (res.ok) {
+        const data = await res.json();
+        setChats(data.chats);
+        if (data.chats.length > 0 && !currentChatId) {
+          setCurrentChatId(data.chats[0].id);
+        } else if (data.chats.length === 0) {
+          createNewChat();
+        }
       }
     } catch (e) {
       console.error("Failed to fetch chats", e);
     }
   };
+
+  // Fetch initial chats
+  useEffect(() => {
+    fetchChats();
+  }, []);
 
   const createNewChat = async () => {
     try {
@@ -260,7 +262,7 @@ export default function Home() {
         const res = await fetch(`${API_URL}/api/chats/${currentChatId}/messages`, { headers: NGROK_HEADERS });
         const data = await res.json();
         // API returns { role, content }, map to our state format
-        setMessages(data.messages.map((m: any) => ({ role: m.role === "assistant" ? "eno" : "user", text: m.content })));
+        setMessages(data.messages.map((m: { role: string; content: string }) => ({ role: m.role === "assistant" ? "eno" : "user", text: m.content })));
       } catch (e) {
         console.error("Failed to fetch messages", e);
       }
