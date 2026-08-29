@@ -55,6 +55,46 @@ def process_pdf_task(file_path: str, course: str, title: str, chat_id: str = Non
     print(f"Finished processing PDF: {file_path}")
 
 @celery_app.task
+def process_image_task(file_path: str, chat_id: str = None):
+    print(f"Processing Image OCR: {file_path}")
+    from ocrmac import ocrmac
+    
+    try:
+        annotations = ocrmac.OCR(file_path).recognize()
+        text = " ".join([ann[0] for ann in annotations])
+        
+        if not text.strip():
+            print(f"No text found in image {file_path}")
+            return
+            
+        vector = embedding_service.embed_text(text)
+        point_id = str(uuid.uuid4())
+        
+        payload = {
+            "text": f"[Image OCR Content]\n{text}",
+            "course": "Chat Context",
+            "title": os.path.basename(file_path),
+            "page": 1,
+            "source_type": "chat_image" if chat_id else "image"
+        }
+        if chat_id:
+            payload["chat_id"] = chat_id
+            
+        qdrant_client.upsert(
+            collection_name="knowledge_base",
+            points=[
+                PointStruct(
+                    id=point_id,
+                    vector=vector,
+                    payload=payload
+                )
+            ]
+        )
+        print(f"Finished OCR processing: {file_path}")
+    except Exception as e:
+        print(f"OCR Error on {file_path}: {e}")
+
+@celery_app.task
 def process_video_task(video_url: str, course: str):
     # Simulated video ingestion pipeline
     print(f"Downloading & Transcribing Video: {video_url}")

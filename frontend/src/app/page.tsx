@@ -377,11 +377,11 @@ export default function Home() {
     }
   }, [isGenerating, isVoiceModeOpen, messages]);
 
-  const [isUploadingChatPdf, setIsUploadingChatPdf] = useState(false);
-  const handleChatPdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const [isUploadingChatFile, setIsUploadingChatFile] = useState(false);
+  const handleChatFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !currentChatId) return;
-    setIsUploadingChatPdf(true);
+    setIsUploadingChatFile(true);
     
     // Optimistically show system message
     setMessages(prev => [...prev, { role: "assistant", text: `[System] Uploading and processing ${file.name} for this chat...` }]);
@@ -391,7 +391,7 @@ export default function Home() {
     formData.append("chat_id", currentChatId);
 
     try {
-      const res = await fetch(`${API_URL}/api/ingest/chat_pdf`, {
+      const res = await fetch(`${API_URL}/api/ingest/chat_file`, {
         method: "POST",
         body: formData,
         headers: NGROK_HEADERS
@@ -404,7 +404,7 @@ export default function Home() {
     } catch (e) {
       setMessages(prev => [...prev.slice(0, -1), { role: "assistant", text: `[System] ❌ Error uploading ${file.name}.` }]);
     }
-    setIsUploadingChatPdf(false);
+    setIsUploadingChatFile(false);
   };
 
   const sendMessage = () => {
@@ -599,13 +599,13 @@ export default function Home() {
           <div className="max-w-3xl mx-auto flex gap-2 items-center p-1.5 rounded-2xl bg-zinc-900 focus-within:ring-1 focus-within:ring-indigo-500/50">
             <input 
               type="file" 
-              accept=".pdf" 
-              onChange={handleChatPdfUpload}
+              accept=".pdf,.png,.jpg,.jpeg,.webp,.heic" 
+              onChange={handleChatFileUpload}
               className="hidden" 
-              id="chat-pdf-upload"
-              disabled={isUploadingChatPdf || !isConnected}
+              id="chat-file-upload"
+              disabled={isUploadingChatFile || !isConnected}
             />
-            <label htmlFor="chat-pdf-upload" className={`p-2.5 rounded-xl cursor-pointer transition-colors ${isUploadingChatPdf ? "text-indigo-400 animate-pulse" : "text-zinc-400 hover:text-white"}`}>
+            <label htmlFor="chat-file-upload" className={`p-2.5 rounded-xl cursor-pointer transition-colors ${isUploadingChatFile ? "text-indigo-400 animate-pulse" : "text-zinc-400 hover:text-white"}`}>
               <Paperclip className="w-5 h-5" />
             </label>
             <button onClick={isRecording ? stopRecording : startRecording} className={`p-2.5 rounded-xl transition-colors ${isRecording ? "bg-red-500 text-white animate-pulse" : "text-zinc-400 hover:text-white"}`}>
