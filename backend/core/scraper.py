@@ -98,32 +98,62 @@ def fetch_webpage_content(url: str) -> str:
         return f"[Error fetching webpage: {str(e)}]"
 
 
+def search_ddg_lite(query: str) -> str:
+    headers = {"User-Agent": "Mozilla/5.0"}
+    resp = requests.post("https://lite.duckduckgo.com/lite/", headers=headers, data={"q": query}, timeout=5)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
+    results = [td.get_text(strip=True) for tr in soup.find_all("tr") if (td := tr.find("td", class_="result-snippet"))]
+    if not results: raise ValueError("No results from DDG Lite")
+    return "\n".join(results[:5])
+
+def search_ddg_package(query: str) -> str:
+    from duckduckgo_search import DDGS
+    results = DDGS().text(query, max_results=5)
+    if not results: raise ValueError("No results from DDGS")
+    return "\n".join([f"{r['title']}: {r['body']}" for r in results])
+
+def search_searxng(query: str) -> str:
+    headers = {"User-Agent": "Mozilla/5.0"}
+    url = f"https://searx.be/search?q={urllib.parse.quote(query)}&format=json"
+    resp = requests.get(url, headers=headers, timeout=5)
+    resp.raise_for_status()
+    results = resp.json().get("results", [])
+    if not results: raise ValueError("No results from SearXNG")
+    return "\n".join([f"{r.get('title')}: {r.get('content')}" for r in results[:5]])
+
+def search_parallel_ai(query: str) -> str:
+    import os
+    api_key = os.environ.get("PARALLEL_API_KEY")
+    if not api_key: raise ValueError("PARALLEL_API_KEY not set")
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    resp = requests.post("https://api.parallel.ai/search", headers=headers, json={"query": query}, timeout=10)
+    resp.raise_for_status()
+    return str(resp.json().get("excerpt", ""))
+
 def search_web_selenium(query: str) -> str:
-    """
-    Perform a web search using DuckDuckGo Lite.
-    This is fast, lightweight, and doesn't require Selenium or API keys.
-    """
+    """Robust 4-tier fallback search pipeline."""
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        }
-        data = {"q": query}
-        resp = requests.post("https://lite.duckduckgo.com/lite/", headers=headers, data=data, timeout=10)
-        resp.raise_for_status()
+        res = search_ddg_lite(query)
+        if res: return f"[Source: DuckDuckGo Lite]\n{res}"
+    except Exception as e: print(f"Tier 1 (DDG Lite) failed: {e}")
         
-        soup = BeautifulSoup(resp.text, "html.parser")
-        results = []
-        for tr in soup.find_all("tr"):
-            td = tr.find("td", class_="result-snippet")
-            if td:
-                results.append(td.get_text(strip=True))
-                
-        if results:
-            return "\n".join(results[:5])
-        return ""
-    except Exception as e:
-        print(f"[Web search] Failed: {e}")
-        return ""
+    try:
+        res = search_ddg_package(query)
+        if res: return f"[Source: DDG API]\n{res}"
+    except Exception as e: print(f"Tier 2 (DDG API) failed: {e}")
+        
+    try:
+        res = search_searxng(query)
+        if res: return f"[Source: SearXNG]\n{res}"
+    except Exception as e: print(f"Tier 3 (SearXNG) failed: {e}")
+        
+    try:
+        res = search_parallel_ai(query)
+        if res: return f"[Source: Parallel AI]\n{res}"
+    except Exception as e: print(f"Tier 4 (Parallel AI) failed: {e}")
+
+    return ""
 
 
 def augment_message_with_content(message: str) -> str:
