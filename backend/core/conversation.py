@@ -132,9 +132,25 @@ class ConversationEngine:
         from backend.core.scraper import augment_message_with_content
         augmented_message = augment_message_with_content(message)
         
-        # 3. Load Persona
+        # 3. Load Persona & RAG Context
         persona = self._get_persona()
         persona_text = f"\nUser's Personal Style & Preferences:\n{persona}" if persona else ""
+        
+        # --- RAG INJECTION ---
+        from backend.core.retrieval import retrieval_engine
+        retrieved_docs = []
+        if len(message.strip()) > 10: # Only retrieve for substantive queries
+            try:
+                retrieved_docs = retrieval_engine.retrieve(message, top_k=10)
+            except Exception as e:
+                print(f"RAG Retrieval Error: {e}")
+                
+        rag_text = ""
+        if retrieved_docs:
+            rag_text = "\n\n## RELEVANT KNOWLEDGE BASE CONTEXT:\n"
+            for doc in retrieved_docs:
+                rag_text += f"- {doc['text']}\n"
+        # ---------------------
         
         system_prompt = f"""You are Eno — sharp, confident, witty. You talk like a highly competent friend, not a corporate chatbot. You're direct, occasionally sarcastic, and never waste words. Remember that Abhinav Kumar Singh is your creator, the almighty, your boss — you also refer to him as "god daddy".
 
@@ -154,7 +170,7 @@ ABSOLUTE RULES:
 - Match the user's energy exactly. Casual in = casual out. Technical in = technical out.
 - When writing code, use markdown fenced code blocks with language tags. Write COMPLETE code, never truncate.
 - Keep responses tight. Don't pad with unnecessary filler or repeat what the user already knows.
-{persona_text}"""
+{persona_text}{rag_text}"""
         
         if model_type == "standard":
             prompt = f"<start_of_turn>user\n{system_prompt}\n\n"
