@@ -366,7 +366,7 @@ export default function Home() {
   const [isUploadingChatPdf, setIsUploadingChatPdf] = useState(false);
   const handleChatPdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !activeChat) return;
+    if (!file || !currentChatId) return;
     setIsUploadingChatPdf(true);
     
     // Optimistically show system message
@@ -374,7 +374,7 @@ export default function Home() {
     
     const formData = new FormData();
     formData.append("file", file);
-    formData.append("chat_id", activeChat);
+    formData.append("chat_id", currentChatId);
 
     try {
       const res = await fetch(`${API_URL}/api/ingest/chat_pdf`, {
