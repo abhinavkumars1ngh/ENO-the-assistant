@@ -131,7 +131,18 @@ def augment_message_with_content(message: str) -> str:
     Also automatically performs a web search for current events if triggered."""
     urls = extract_urls(message)
     augmentations = []
+    msg_lower = message.lower()
     
+    # 1. Manual Web Search Trigger
+    if "@stalk" in msg_lower:
+        search_query = re.sub(r'(?i)@stalk\s*', '', message).strip()
+        search_results = search_web_selenium(search_query)
+        if search_results:
+            augmentations.append(f"\n\n[System Note: The user explicitly requested a web search using @stalk. Here are the search results for '{search_query}':\n{search_results}]")
+        # Strip @stalk from the actual message going to the LLM so it doesn't get confused
+        message = search_query
+        
+    # 2. URL Extraction
     if urls:
         for url in urls:
             video_id = get_youtube_video_id(url)
@@ -144,9 +155,9 @@ def augment_message_with_content(message: str) -> str:
             else:
                 content = fetch_webpage_content(url)
                 augmentations.append(f"\n\n[System Note: The user linked a webpage ({url}). Here is its content for your reference:\n{content}]")
-    else:
-        # If no URLs, check if the user is asking about current affairs/news
-        msg_lower = message.lower()
+                
+    # 3. Auto Web Search Trigger (only if no manual trigger and no URLs)
+    elif "@stalk" not in msg_lower:
         search_triggers = [
             # Time-related
             "who won", "score", "result", "latest", "news", "today", "yesterday",
