@@ -7,7 +7,7 @@ class RetrievalEngine:
     def __init__(self, collection_name="knowledge_base"):
         self.collection_name = collection_name
 
-    def retrieve(self, query: str, top_k: int = 20, filter_course: str = None) -> list[dict]:
+    def retrieve(self, query: str, top_k: int = 20, filter_course: str = None, chat_id: str = None) -> list[dict]:
         """
         Hybrid retrieval (Vector + BM25 theoretically, here implemented as Vector search)
         followed by Cross-Encoder Reranking.
@@ -15,15 +15,24 @@ class RetrievalEngine:
         query_vector = embedding_service.embed_text(query)
 
         query_filter = None
+        must_conditions = []
+        should_conditions = []
+        
         if filter_course:
-            query_filter = Filter(
-                must=[
-                    FieldCondition(
-                        key="course",
-                        match=MatchValue(value=filter_course),
-                    )
-                ]
-            )
+            must_conditions.append(FieldCondition(key="course", match=MatchValue(value=filter_course)))
+            
+        if chat_id:
+            # Must be either a global pdf OR belong to this specific chat
+            should_conditions = [
+                FieldCondition(key="source_type", match=MatchValue(value="pdf")),
+                FieldCondition(key="chat_id", match=MatchValue(value=chat_id))
+            ]
+        else:
+            # If no chat_id provided, ONLY search global pdfs (do not leak other chat's temporary files)
+            must_conditions.append(FieldCondition(key="source_type", match=MatchValue(value="pdf")))
+            
+        if must_conditions or should_conditions:
+            query_filter = Filter(must=must_conditions, should=should_conditions)
 
         # 1. Retrieve candidate chunks from Qdrant
         search_result = qdrant_client.search(

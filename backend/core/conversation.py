@@ -141,7 +141,7 @@ class ConversationEngine:
         retrieved_docs = []
         if len(message.strip()) > 10: # Only retrieve for substantive queries
             try:
-                retrieved_docs = retrieval_engine.retrieve(message, top_k=10)
+                retrieved_docs = retrieval_engine.retrieve(message, top_k=10, chat_id=chat_id)
             except Exception as e:
                 print(f"RAG Retrieval Error: {e}")
                 

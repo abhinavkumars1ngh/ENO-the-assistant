@@ -82,6 +82,18 @@ async def upload_pdf(course: str = Form(...), title: str = Form(...), file: Uplo
     
     return {"message": "PDF ingestion started", "filename": file.filename}
 
+@router.post("/ingest/chat_pdf")
+async def upload_chat_pdf(chat_id: str = Form(...), file: UploadFile = File(...)):
+    # Save file temporarily
+    file_path = f"/Users/abhinavkumarsingh/ENO/storage/documents/{file.filename}"
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    
+    # Trigger celery background task with chat_id
+    process_pdf_task.delay(file_path, "Chat Context", file.filename, chat_id=chat_id)
+    
+    return {"message": "Chat PDF ingestion started", "filename": file.filename}
+
 @router.post("/ingest/video")
 async def ingest_video(course: str = Form(...), video_url: str = Form(...)):
     process_video_task.delay(video_url, course)

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Mic, Send, Bot, Sparkles, Copy, Check, Square, Trash2, Plus, MessageSquare, BookOpen, Brain, Settings, X, Headphones } from "lucide-react";
+import { Mic, Send, Bot, Sparkles, Copy, Check, Square, Trash2, Plus, MessageSquare, BookOpen, Brain, Settings, X, Headphones, Paperclip } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -363,6 +363,36 @@ export default function Home() {
     }
   }, [isGenerating, isVoiceModeOpen, messages]);
 
+  const [isUploadingChatPdf, setIsUploadingChatPdf] = useState(false);
+  const handleChatPdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !activeChat) return;
+    setIsUploadingChatPdf(true);
+    
+    // Optimistically show system message
+    setMessages(prev => [...prev, { role: "assistant", text: `[System] Uploading and processing ${file.name} for this chat...` }]);
+    
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("chat_id", activeChat);
+
+    try {
+      const res = await fetch(`${API_URL}/api/ingest/chat_pdf`, {
+        method: "POST",
+        body: formData,
+        headers: NGROK_HEADERS
+      });
+      if (res.ok) {
+        setMessages(prev => [...prev.slice(0, -1), { role: "assistant", text: `[System] ✅ Successfully uploaded **${file.name}**. You can now ask questions about it.` }]);
+      } else {
+        setMessages(prev => [...prev.slice(0, -1), { role: "assistant", text: `[System] ❌ Failed to upload ${file.name}.` }]);
+      }
+    } catch (e) {
+      setMessages(prev => [...prev.slice(0, -1), { role: "assistant", text: `[System] ❌ Error uploading ${file.name}.` }]);
+    }
+    setIsUploadingChatPdf(false);
+  };
+
   const sendMessage = () => {
     if (!input.trim() || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || isGenerating) return;
     setIsGenerating(true);
@@ -553,6 +583,17 @@ export default function Home() {
             </div>
           </div>
           <div className="max-w-3xl mx-auto flex gap-2 items-center p-1.5 rounded-2xl bg-zinc-900 focus-within:ring-1 focus-within:ring-indigo-500/50">
+            <input 
+              type="file" 
+              accept=".pdf" 
+              onChange={handleChatPdfUpload}
+              className="hidden" 
+              id="chat-pdf-upload"
+              disabled={isUploadingChatPdf || !isConnected}
+            />
+            <label htmlFor="chat-pdf-upload" className={`p-2.5 rounded-xl cursor-pointer transition-colors ${isUploadingChatPdf ? "text-indigo-400 animate-pulse" : "text-zinc-400 hover:text-white"}`}>
+              <Paperclip className="w-5 h-5" />
+            </label>
             <button onClick={isRecording ? stopRecording : startRecording} className={`p-2.5 rounded-xl transition-colors ${isRecording ? "bg-red-500 text-white animate-pulse" : "text-zinc-400 hover:text-white"}`}>
               {isRecording ? <Square className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
             </button>

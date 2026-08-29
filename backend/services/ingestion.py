@@ -7,7 +7,7 @@ import uuid
 import os
 
 @celery_app.task
-def process_pdf_task(file_path: str, course: str, title: str):
+def process_pdf_task(file_path: str, course: str, title: str, chat_id: str = None):
     print(f"Processing PDF: {file_path}")
     doc = fitz.open(file_path)
     
@@ -32,19 +32,23 @@ def process_pdf_task(file_path: str, course: str, title: str):
         vector = embedding_service.embed_text(chunk["text"])
         point_id = str(uuid.uuid4())
         
+        payload = {
+            "text": chunk["text"],
+            "course": course,
+            "title": title,
+            "page": chunk["page"],
+            "source_type": "chat_pdf" if chat_id else "pdf"
+        }
+        if chat_id:
+            payload["chat_id"] = chat_id
+            
         qdrant_client.upsert(
             collection_name="knowledge_base",
             points=[
                 PointStruct(
                     id=point_id,
                     vector=vector,
-                    payload={
-                        "text": chunk["text"],
-                        "course": course,
-                        "title": title,
-                        "page": chunk["page"],
-                        "source_type": "pdf"
-                    }
+                    payload=payload
                 )
             ]
         )
