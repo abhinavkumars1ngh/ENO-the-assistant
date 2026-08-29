@@ -3,7 +3,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Mic, Send, Bot, Sparkles, Copy, Check, Square, Trash2, Plus, MessageSquare, BookOpen, Brain, Settings, X, Headphones, Paperclip } from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import remarkGfm from "react-markdown";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import TextareaAutosize from "react-textarea-autosize";
@@ -43,8 +46,17 @@ function CopyButton({ text }: { text: string }) {
 }
 
 function MarkdownRenderer({ content }: { content: string }) {
+  // Pre-process Gemma's LaTeX brackets into standard Markdown dollar signs
+  const formattedContent = content
+    .replace(/\\\[/g, '$$$$')
+    .replace(/\\\]/g, '$$$$')
+    .replace(/\\\(/g, '$')
+    .replace(/\\\)/g, '$');
+
   return (
     <ReactMarkdown
+      remarkPlugins={[remarkGfm, remarkMath]}
+      rehypePlugins={[rehypeKatex]}
       components={{
         code({ className, children, ...props }) {
           const match = /language-(\w+)/.exec(className || "");
@@ -72,7 +84,7 @@ function MarkdownRenderer({ content }: { content: string }) {
         }
       }}
     >
-      {content}
+      {formattedContent}
     </ReactMarkdown>
   );
 }
