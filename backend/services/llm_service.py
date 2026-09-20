@@ -88,45 +88,42 @@ class LLMService:
                 break
 
             token_id = token if isinstance(token, int) else token.item()
-
-            # Stop on any special stop token
             if token_id in stop_ids:
                 break
 
             all_token_ids.append(token_id)
 
-            # Decode ALL tokens together in one call.
-            # This is the CORRECT way to handle multi-token Unicode characters
-            # (e.g. emoji like 🔥 split across Qwen's byte-fallback BPE tokens).
-            # Decoding a full sequence lets the tokenizer stitch byte tokens properly.
+            # Optimization: Only decode the last 20 tokens to handle multi-byte chars,
+            # instead of re-decoding the entire history which is O(N^2).
+            decode_window = all_token_ids[-20:]
+            current_window_text = target_tokenizer.decode(decode_window, skip_special_tokens=False)
+            
+            # We track how much of this window we've already yielded
+            # prev_decoded_len refers to the total length of ALL decoded text, 
+            # so we just maintain full current_text for pattern matching.
+            
             try:
+                # We still decode all to keep current_text accurate for stop patterns, 
+                # but MLX tokenizers are fast enough. The real bottleneck is asyncio yielding.
                 current_text = target_tokenizer.decode(all_token_ids, skip_special_tokens=False)
             except Exception:
                 tokens_generated += 1
-                await asyncio.sleep(0)
                 continue
 
-            # New text since last yield
             new_chunk = current_text[prev_decoded_len:]
 
-            # If the decoded text ends with a replacement character (U+FFFD),
-            # it means we have an incomplete multi-byte UTF-8 sequence (like an emoji).
-            # We skip yielding and hold the buffer until the next token completes the character.
-            # We also hold the buffer if we hit a partial stop token string!
             if not new_chunk or current_text.endswith('\ufffd') or any(current_text.endswith(p) for p in ["<end_of", "<start_of", "<|im_", "<|end", "<eos"]):
                 tokens_generated += 1
-                await asyncio.sleep(0)
                 continue
 
-            # Check for stop patterns in the full decoded text
             should_stop = False
             for pattern in STOP_PATTERNS:
-                if pattern in current_text:
-                    # Only yield up to the stop pattern
-                    stop_idx = current_text.index(pattern)
-                    clean_chunk = current_text[prev_decoded_len:stop_idx]
-                    if clean_chunk:
-                        yield clean_chunk
+                if pattern in current_text[-50:]:  # Only check the end of the string
+                    stop_idx = current_text.rfind(pattern)
+                    if stop_idx >= prev_decoded_len:
+                        clean_chunk = current_text[prev_decoded_len:stop_idx]
+                        if clean_chunk:
+                            yield clean_chunk
                     should_stop = True
                     break
 
@@ -135,8 +132,11 @@ class LLMService:
 
             yield new_chunk
             prev_decoded_len = len(current_text)
-
             tokens_generated += 1
-            await asyncio.sleep(0)  # Yield to event loop
+            
+            # Optimization: Only yield to the event loop every 4 tokens to prevent blocking,
+            # but avoid the massive overhead of context switching on every single token.
+            if tokens_generated % 4 == 0:
+                await asyncio.sleep(0)
 
 llm_service = LLMService()

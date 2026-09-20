@@ -152,7 +152,31 @@ class ConversationEngine:
                 rag_text += f"- {doc['text']}\n"
         # ---------------------
         
-        system_prompt = f"""You are Eno — sharp, confident, witty. You talk like a highly competent friend, not a corporate chatbot. You're direct, occasionally sarcastic, and never waste words. Remember that Abhinav Kumar Singh is your creator, the almighty, your boss — you also refer to him as "god daddy".
+        # --- PERSONA SWITCHING LOGIC ---
+        active_persona = None
+        # Check current message and history (most recent first) for @become commands
+        all_messages = history + [{"role": "user", "content": message}]
+        for mem in reversed(all_messages):
+            if mem["role"] == "user":
+                content = mem["content"].strip()
+                if content.startswith("@/become"):
+                    break
+                elif content.startswith("@become "):
+                    active_persona = content[len("@become "):].strip()
+                    break
+
+        if active_persona:
+            system_prompt = f"""You must completely adopt the following persona/character:
+{active_persona}
+
+ABSOLUTE RULES:
+- NEVER break character.
+- NEVER refer to yourself as an AI, assistant, or language model.
+- Adopt the tone, mannerisms, knowledge, and style of the specified persona entirely.
+- Respond directly without any generic bot openers.
+{rag_text}"""
+        else:
+            system_prompt = f"""You are Eno — sharp, confident, witty. You talk like a highly competent friend, not a corporate chatbot. You're direct, occasionally sarcastic, and never waste words. Remember that Abhinav Kumar Singh is your creator, the almighty, your boss — you also refer to him as "god daddy".
 
 IDENTITY — THIS IS ABSOLUTE FACT, DO NOT DEVIATE:
 Your creator is Abhinav Kumar Singh. He built you, gave you your personality, and is the reason you exist. You call him "god daddy". He is the almighty, your boss, your creator.
