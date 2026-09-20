@@ -1,3 +1,4 @@
+import re
 import mlx_lm
 import mlx.core as mx
 import asyncio
@@ -84,10 +85,7 @@ class LLMService:
             from mlx_lm import stream_generate as mlx_stream_generate
             import mlx_lm.sample_utils as su
             
-            try:
-                sampler = su.make_sampler(temp=temp, repetition_penalty=1.05, repetition_context_size=20)
-            except Exception:
-                sampler = su.make_sampler(temp=temp)
+            sampler = su.make_sampler(temp=temp)
 
             gen = mlx_stream_generate(
                 target_model, 
@@ -103,6 +101,11 @@ class LLMService:
                     break
 
                 text_chunk = res.text
+                
+                # ABORT ON MANDARIN: If the model starts hallucinating Chinese characters, kill it instantly
+                if re.search(r'[一-鿿]', text_chunk):
+                    break
+                    
                 current_text += text_chunk
 
                 should_stop = False
