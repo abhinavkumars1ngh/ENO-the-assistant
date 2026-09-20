@@ -22,9 +22,9 @@ class StateManager:
         """
         content = content.strip()
         if content.startswith("@/become"):
-            return "Hello! Please introduce yourself."
+            return "Hey!"
         if content.startswith("@become "):
-            return "Hello! Please introduce yourself and stay in character."
+            return "Hi!"
         return content
 
 state_manager = StateManager()
