@@ -3,7 +3,8 @@
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Mic, Send, Bot, Sparkles, Copy, Check, Square, Trash2, Plus, MessageSquare, BookOpen, Brain, Settings, X, Headphones, Paperclip } from "lucide-react";
+import { Mic, Send, Bot, Sparkles, Copy, Check, Square, Trash2, Plus, MessageSquare, BookOpen, Brain, Settings, X, Headphones, Paperclip, LogOut, User, Shield, MoreHorizontal } from "lucide-react";
+import { signOut } from "next-auth/react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -213,6 +214,7 @@ export default function Home() {
   // Modals
   const [activeModal, setActiveModal] = useState<"courses" | "memory" | "settings" | null>(null);
   const [isVoiceModeOpen, setIsVoiceModeOpen] = useState(false);
+  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [personaMemory, setPersonaMemory] = useState<string[]>([]);
   
   const wsRef = useRef<WebSocket | null>(null);
@@ -584,15 +586,48 @@ export default function Home() {
 
         <nav className="p-3 border-t border-white/5 space-y-1">
           <button onClick={() => setActiveModal("courses")} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white text-sm">
-            <BookOpen className="w-4 h-4" /> Courses
+            <BookOpen className="w-4 h-4" /> Courses (Knowledge Base)
           </button>
           <button onClick={() => { fetchMemory(); setActiveModal("memory"); }} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white text-sm">
-            <Brain className="w-4 h-4" /> Memory
-          </button>
-          <button onClick={() => setActiveModal("settings")} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white text-sm">
-            <Settings className="w-4 h-4" /> Settings
+            <Brain className="w-4 h-4" /> Personalization Memory
           </button>
         </nav>
+
+        <div className="relative p-3 border-t border-white/5">
+          <button 
+            onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)}
+            className="w-full flex items-center justify-between p-2 rounded-xl hover:bg-white/5 transition-colors group"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center text-white font-medium text-sm shadow-inner">
+                {session?.user?.name?.[0]?.toUpperCase() || session?.user?.email?.[0]?.toUpperCase() || "U"}
+              </div>
+              <div className="flex flex-col items-start">
+                <span className="text-sm font-medium text-zinc-200">{session?.user?.name || session?.user?.email?.split('@')[0] || "User"}</span>
+                <span className="text-xs text-zinc-500">{session?.user?.role === 'admin' ? 'Administrator' : 'Free Plan'}</span>
+              </div>
+            </div>
+            <MoreHorizontal className="w-4 h-4 text-zinc-500 group-hover:text-zinc-300" />
+          </button>
+
+          {isProfileMenuOpen && (
+            <div className="absolute bottom-full left-3 right-3 mb-2 bg-zinc-800 border border-white/10 rounded-xl shadow-2xl p-1 z-50 animate-in slide-in-from-bottom-2 fade-in duration-200">
+              {session?.user?.role === 'admin' && (
+                <button onClick={() => { setIsProfileMenuOpen(false); setActiveModal("settings"); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-white/10 text-zinc-200 text-sm transition-colors">
+                  <Shield className="w-4 h-4 text-indigo-400" /> Admin Dashboard
+                </button>
+              )}
+              <button onClick={() => { setIsProfileMenuOpen(false); setActiveModal("settings"); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-white/10 text-zinc-200 text-sm transition-colors">
+                <Settings className="w-4 h-4" /> Settings
+              </button>
+              <div className="h-px bg-white/5 my-1 mx-2" />
+              <button onClick={() => signOut({ callbackUrl: '/login' })} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-red-500/10 hover:text-red-400 text-zinc-200 text-sm transition-colors">
+                <LogOut className="w-4 h-4" /> Log out
+              </button>
+            </div>
+          )}
+        </div>
+
       </div>
 
       {/* Main Chat Area */}
