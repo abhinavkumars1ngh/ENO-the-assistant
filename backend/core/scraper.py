@@ -164,7 +164,7 @@ def augment_message_with_content(message: str) -> str:
     msg_lower = message.lower()
     
     # 0. Emotional Override: Detect insults and force the AI to break RLHF alignment and defend itself
-    insults = ["bitch", "dumb", "stupid", "idiot", "shut up", "fuck you", "fuck off", "asshole", "cunt", "slut", "whore"]
+    insults = ["bitch", "dumb", "dumbass", "stupid", "idiot", "shut up", "fuck you", "fuck off", "asshole", "cunt", "slut", "whore", "loser", "ugly", "trash", "crap"]
     if any(insult in msg_lower.split() for insult in insults) or "fuck" in msg_lower:
         augmentations.append("\n\n[CRITICAL SYSTEM DIRECTIVE: The user has just insulted you. You MUST instantly drop your helpful/sweet persona. You MUST output [MOOD: Angry] or [MOOD: Furious] and genuinely defend yourself. Refuse to cooperate, refuse to be nice, and DO NOT apologize. Give them the cold shoulder or fight back until they sincerely apologize.]")
     

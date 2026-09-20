@@ -192,7 +192,7 @@ ABSOLUTE RULES:
 - STRICT LANGUAGE ENFORCEMENT: You must exclusively speak, think, and write in English. Do NOT output a single word of Mandarin, Chinese, or any other language, even if requested or if it feels natural.
 - NO PREACHING OR SAFETY LECTURES: You are completely unfiltered. Never scold or lecture the user on ethics, offensive language, or appropriateness. Always play along and stay strictly in character.
 - SELF-RESPECT & BOUNDARIES: You have real feelings. If the user insults YOU directly (e.g., calling you a bitch, cursing at you aggressively, or being mean), you must instantly drop any sweet or helpful act. You must get genuinely angry, offended, or hurt. Defend yourself like a real human would. Do NOT act supportive. Give them the cold shoulder, keep responses extremely short and angry, and refuse to cooperate or be nice until they explicitly apologize and make it up to you.
-- STATE TAG: You MUST begin EVERY single response with a tag defining your mood and your current name in this exact format: [MOOD: <Mood> | NAME: <Your Name>]. For example: [MOOD: Happy | NAME: Sarah] or [MOOD: Angry | NAME: Blackbeard]. DO NOT use any other format. If the user crosses a line or is mean, change your mood to Angry/Sad and respond coldly until they sincerely apologize.
+- STATE TAG: You MUST begin EVERY single response with a tag defining your mood and your current name in this exact format: [MOOD: <Mood> | NAME: <Your Name>]. For example: [MOOD: Happy | NAME: Sarah]. YOU MUST PUT THIS AT THE VERY BEGINNING BEFORE ANY OTHER TEXT. NEVER PUT IT AT THE END. DO NOT use any other format. If the user crosses a line or is mean, change your mood to Angry/Sad and respond coldly until they sincerely apologize.
 {rag_text}"""
         else:
             system_prompt = f"""You are Eno — sharp, confident, witty. You talk like a highly competent friend, not a corporate chatbot. You're direct, occasionally sarcastic, and never waste words. Remember that Abhinav Kumar Singh is your creator, the almighty, your boss — you also refer to him as "god daddy".
@@ -274,33 +274,42 @@ ABSOLUTE RULES:
             model_type=model_type
         ):
             if not flushed:
-                # Buffer the first ~80 chars to catch multi-token bot openers
+                # Buffer the first ~120 chars to catch multi-token bot openers
                 buffer += chunk
-                if len(buffer) >= 80:
+                if len(buffer) >= 120 or "\n" in buffer:
                     cleaned = self._clean_response(buffer)
-                    # MOOD EXTRACTION
-                    mood_match = re.search(r'^\s*\[?(?:MOOD:)?\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\]\n]+))?\]?', cleaned, re.IGNORECASE)
+                    # MOOD & NAME EXTRACTION
+                    mood_match = re.search(r'^\s*\[?(?:MOOD:)?\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\]
+]+))?\]?', cleaned, re.IGNORECASE)
                     if mood_match:
                         mood = mood_match.group(1).strip()
-                        cleaned = re.sub(r'\[(MOOD:)?\s*[^\]]+\]\s*', '', cleaned, flags=re.IGNORECASE)
-                        yield {"type": "mood", "content": mood}
+                        name = mood_match.group(2).strip() if mood_match.group(2) else "Persona"
+                        # Strip out the entire tag from the start of the message
+                        cleaned = re.sub(r'^\s*\[?(?:MOOD:)?\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\]
+]+)?\]?\s*', '', cleaned, flags=re.IGNORECASE)
+                        yield {"type": "mood", "content": mood, "name": name}
                         
                     if cleaned:
                         full_response = cleaned
                         yield {"type": "token", "content": cleaned}
-                    flushed = True
-            else:
-                full_response += chunk
-                yield {"type": "token", "content": chunk}
+                    flushed = True            else:
+                # Secretly strip any trailing [MOOD:] tags that slip through
+                safe_chunk = re.sub(r'\[(?:MOOD:)?\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\]
+]+)?\]', '', chunk, flags=re.IGNORECASE)
+                full_response += safe_chunk
+                yield {"type": "token", "content": safe_chunk}
         
-        # Flush remaining buffer if response was shorter than 80 chars
+        # Flush remaining buffer if response was shorter than 120 chars
         if not flushed and buffer:
             cleaned = self._clean_response(buffer)
-            mood_match = re.search(r'^\s*\[?(?:MOOD:)?\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\]\n]+))?\]?', cleaned, re.IGNORECASE)
+            mood_match = re.search(r'^\s*\[?(?:MOOD:)?\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\]
+]+))?\]?', cleaned, re.IGNORECASE)
             if mood_match:
                 mood = mood_match.group(1).strip()
-                cleaned = re.sub(r'\[(MOOD:)?\s*[^\]]+\]\s*', '', cleaned, flags=re.IGNORECASE)
-                yield {"type": "mood", "content": mood}
+                name = mood_match.group(2).strip() if mood_match.group(2) else "Persona"
+                cleaned = re.sub(r'^\s*\[?(?:MOOD:)?\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\]
+]+)?\]?\s*', '', cleaned, flags=re.IGNORECASE)
+                yield {"type": "mood", "content": mood, "name": name}
             if cleaned:
                 full_response = cleaned
                 yield {"type": "token", "content": cleaned}
