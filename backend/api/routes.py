@@ -51,7 +51,7 @@ def sync_oauth_user(data: GoogleAuthSync, db: Session = Depends(get_db)):
         db.refresh(user)
         
     access_token = create_access_token(data={"sub": str(user.id)})
-    return {"access_token": access_token, "token_type": "bearer", "user_id": user.id}
+    return {"access_token": access_token, "token_type": "bearer", "user_id": user.id, "role": user.role}
 
 
 def _convert_webm_to_wav(webm_path: str) -> str:

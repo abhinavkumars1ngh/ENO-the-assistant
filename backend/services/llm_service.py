@@ -84,7 +84,10 @@ class LLMService:
             from mlx_lm import stream_generate as mlx_stream_generate
             import mlx_lm.sample_utils as su
             
-            sampler = su.make_sampler(temp=temp)
+            try:
+                sampler = su.make_sampler(temp=temp, repetition_penalty=1.05, repetition_context_size=20)
+            except Exception:
+                sampler = su.make_sampler(temp=temp)
 
             gen = mlx_stream_generate(
                 target_model, 

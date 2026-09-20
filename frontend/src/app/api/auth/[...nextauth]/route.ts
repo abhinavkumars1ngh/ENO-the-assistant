@@ -18,7 +18,7 @@ const handler = NextAuth({
         if (!credentials?.username || !credentials?.password) return null;
 
         try {
-          const res = await fetch("http://localhost:8000/login", {
+          const res = await fetch("http://localhost:8000/api/login", {
             method: "POST",
             headers: {
               "Content-Type": "application/x-www-form-urlencoded",
@@ -32,7 +32,7 @@ const handler = NextAuth({
           if (res.ok) {
             const user = await res.json();
             if (user && user.access_token) {
-              return { id: user.user_id, name: credentials.username, apiToken: user.access_token };
+              return { id: user.user_id, name: credentials.username, apiToken: user.access_token, role: user.role };
             }
           }
           return null;
@@ -48,11 +48,12 @@ const handler = NextAuth({
       // If user logged in with Credentials
       if (user?.apiToken) {
         token.apiToken = user.apiToken;
+        token.role = user.role;
       }
       // If user logged in with Google, we need to sync them with FastAPI
       if (account?.provider === "google" && user?.email) {
         try {
-          const res = await fetch("http://localhost:8000/auth/sync", {
+          const res = await fetch("http://localhost:8000/api/auth/sync", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ email: user.email })
@@ -60,6 +61,7 @@ const handler = NextAuth({
           if (res.ok) {
             const data = await res.json();
             token.apiToken = data.access_token;
+            token.role = data.role;
           }
         } catch (e) {
           console.error("Google sync error:", e);
@@ -69,6 +71,7 @@ const handler = NextAuth({
     },
     async session({ session, token }) {
       session.apiToken = token.apiToken as string;
+      if (session.user) session.user.role = token.role as string;
       return session;
     }
   },

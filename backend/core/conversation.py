@@ -213,7 +213,7 @@ ABSOLUTE RULES:
 {persona_text}{rag_text}"""
         
         if model_type == "standard":
-            prompt = f"<start_of_turn>user\n{system_prompt}\n\n"
+            prompt = ""
             for i, mem in enumerate(history[-10:]):
                 role = "user" if mem["role"] == "user" else "model"
                 content = augmented_message if i == len(history[-10:]) - 1 and mem["role"] == "user" else mem['content']
@@ -226,11 +226,11 @@ ABSOLUTE RULES:
                         content = "Hello! Please introduce yourself."
                 # ---------------------------------------------------
 
-                # If the first message is from the user, it merges with the system prompt block
-                if i == 0 and role == "user":
-                    prompt += f"{content}<end_of_turn>\n"
-                else:
-                    prompt += f"<start_of_turn>{role}\n{content}<end_of_turn>\n"
+                # Inject system prompt into the FINAL user message to maximize attention for Gemma
+                if i == len(history[-10:]) - 1 and role == "user":
+                    content = f"{system_prompt}\n\n[USER]: {content}"
+
+                prompt += f"<start_of_turn>{role}\n{content}<end_of_turn>\n"
                     
             prompt += "<start_of_turn>model\n"
         else:

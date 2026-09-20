@@ -46,10 +46,10 @@ def migrate():
     # 2. Create or find admin user
     admin_user = db.query(schema.User).filter(schema.User.username == "admin").first()
     if not admin_user:
-        print("Creating admin user with password '12345'...")
+        print("Creating admin user with password 'adminisghei'...")
         admin_user = schema.User(
             username="admin",
-            hashed_password=get_password_hash("12345"),
+            hashed_password=get_password_hash("adminisghei"),
             role="admin"
         )
         db.add(admin_user)
@@ -57,7 +57,7 @@ def migrate():
         db.refresh(admin_user)
     else:
         print("Admin user already exists. Updating password...")
-        admin_user.hashed_password = get_password_hash("12345")
+        admin_user.hashed_password = get_password_hash("adminisghei")
         db.commit()
 
     print(f"Admin user ID: {admin_user.id}")
