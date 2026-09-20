@@ -8,8 +8,14 @@ Base = declarative_base()
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
-    username = Column(String, unique=True, index=True)
+    username = Column(String, unique=True, index=True, nullable=True) # Used for admin
+    email = Column(String, unique=True, index=True, nullable=True) # Used for Google OAuth
+    hashed_password = Column(String, nullable=True)
+    role = Column(String, default="user") # 'admin' or 'user'
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationship to conversations
+    conversations = relationship("Conversation", back_populates="user")
 
 class Document(Base):
     __tablename__ = "documents"
@@ -39,6 +45,7 @@ class Video(Base):
 class Conversation(Base):
     __tablename__ = "conversations"
     id = Column(String, primary_key=True, index=True) # UUID
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True) # Nullable temporarily for migration
     title = Column(String)
     created = Column(DateTime(timezone=True), server_default=func.now())
     updated = Column(DateTime(timezone=True), onupdate=func.now())
@@ -46,6 +53,7 @@ class Conversation(Base):
     mode = Column(String)
     summary = Column(Text)
     
+    user = relationship("User", back_populates="conversations")
     messages = relationship("Message", back_populates="conversation")
 
 class Message(Base):

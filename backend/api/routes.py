@@ -1,17 +1,57 @@
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from backend.core.database import get_db
-from backend.models.schema import Conversation, Message, Memory
+from backend.core.auth import get_current_user, create_access_token, get_password_hash
+from passlib.context import CryptContext
+from backend.models.schema import Conversation, Message, Memory, User
 from backend.services.ingestion import process_pdf_task, process_video_task, process_image_task
 from backend.services.voice_service import voice_service
+from pydantic import BaseModel
 import shutil
 import os
 import uuid
 import datetime
 import tempfile
 import subprocess
+import bcrypt
 
 router = APIRouter()
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+class GoogleAuthSync(BaseModel):
+    email: str
+
+@router.post("/login")
+def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == form_data.username).first()
+    if not user or not user.hashed_password:
+        raise HTTPException(status_code=401, detail="Incorrect username or password")
+        
+    try:
+        # Check password
+        if not bcrypt.checkpw(form_data.password.encode('utf-8'), user.hashed_password.encode('utf-8')):
+            raise HTTPException(status_code=401, detail="Incorrect username or password")
+    except Exception:
+        # Fallback if the hash isn't pure bcrypt format
+        if not pwd_context.verify(form_data.password, user.hashed_password):
+            raise HTTPException(status_code=401, detail="Incorrect username or password")
+            
+    access_token = create_access_token(data={"sub": str(user.id)})
+    return {"access_token": access_token, "token_type": "bearer", "user_id": user.id, "role": user.role}
+
+@router.post("/auth/sync")
+def sync_oauth_user(data: GoogleAuthSync, db: Session = Depends(get_db)):
+    """Syncs a Google OAuth user from NextAuth to the FastAPI database and returns a JWT."""
+    user = db.query(User).filter(User.email == data.email).first()
+    if not user:
+        user = User(email=data.email, role="user")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        
+    access_token = create_access_token(data={"sub": str(user.id)})
+    return {"access_token": access_token, "token_type": "bearer", "user_id": user.id}
 
 
 def _convert_webm_to_wav(webm_path: str) -> str:
@@ -107,17 +147,18 @@ async def ingest_video(course: str = Form(...), video_url: str = Form(...)):
 # --- Chat Management Endpoints ---
 
 @router.get("/chats")
-def get_chats(db: Session = Depends(get_db)):
-    """Fetch all conversations, ordered by most recently updated."""
-    chats = db.query(Conversation).order_by(Conversation.updated.desc()).all()
+def get_chats(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Fetch all conversations for the logged in user, ordered by most recently updated."""
+    chats = db.query(Conversation).filter(Conversation.user_id == current_user.id).order_by(Conversation.updated.desc()).all()
     return {"chats": [{"id": c.id, "title": c.title, "updated": c.updated} for c in chats]}
 
 @router.post("/chats")
-def create_chat(db: Session = Depends(get_db)):
+def create_chat(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Create a new conversation."""
     chat_id = str(uuid.uuid4())
     new_chat = Conversation(
         id=chat_id,
+        user_id=current_user.id,
         title="New Chat",
         created=datetime.datetime.utcnow(),
         updated=datetime.datetime.utcnow()
@@ -127,24 +168,32 @@ def create_chat(db: Session = Depends(get_db)):
     return {"id": chat_id, "title": "New Chat"}
 
 @router.get("/chats/{chat_id}/messages")
-def get_chat_messages(chat_id: str, db: Session = Depends(get_db)):
-    """Fetch all messages for a specific conversation."""
+def get_chat_messages(chat_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Fetch all messages for a specific conversation, ensuring ownership."""
+    # Verify ownership
+    chat = db.query(Conversation).filter(Conversation.id == chat_id, Conversation.user_id == current_user.id).first()
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+        
     messages = db.query(Message).filter(Message.conversation_id == chat_id).order_by(Message.timestamp.asc()).all()
     return {"messages": [{"role": m.role, "content": m.content, "timestamp": m.timestamp} for m in messages]}
 
 @router.delete("/chats/{chat_id}")
-def delete_chat(chat_id: str, db: Session = Depends(get_db)):
+def delete_chat(chat_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Delete a conversation and its messages."""
+    chat = db.query(Conversation).filter(Conversation.id == chat_id, Conversation.user_id == current_user.id).first()
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+        
     db.query(Message).filter(Message.conversation_id == chat_id).delete()
-    db.query(Conversation).filter(Conversation.id == chat_id).delete()
+    db.delete(chat)
     db.commit()
     return {"status": "ok"}
 
 # --- Memory Endpoints ---
 
 @router.get("/memory")
-def get_persona_memory(db: Session = Depends(get_db)):
+def get_persona_memory(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Fetch the synthesized user persona/style preferences."""
-    # Assuming user_id=1 for local single-user app
-    memories = db.query(Memory).filter(Memory.user_id == 1, Memory.type == "persona").order_by(Memory.timestamp.desc()).all()
+    memories = db.query(Memory).filter(Memory.user_id == current_user.id, Memory.type == "persona").order_by(Memory.timestamp.desc()).all()
     return {"persona": [m.fact for m in memories]}

@@ -1,5 +1,7 @@
 "use client";
 
+import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Mic, Send, Bot, Sparkles, Copy, Check, Square, Trash2, Plus, MessageSquare, BookOpen, Brain, Settings, X, Headphones, Paperclip } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -19,7 +21,7 @@ interface Message {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
-const NGROK_HEADERS = { "ngrok-skip-browser-warning": "true" };
+const getHeaders = (token: string) => ({ "ngrok-skip-browser-warning": "true", ...(token ? { Authorization: `Bearer ${token}` } : {}) });
 
 interface ChatSession {
   id: string;
@@ -125,6 +127,7 @@ function PdfUploader() {
 
     try {
       const res = await fetch(`${API_URL}/api/ingest/pdf`, {
+        headers: { Authorization: `Bearer ${apiToken}` },
         method: "POST",
         body: formData,
         headers: NGROK_HEADERS
@@ -185,6 +188,17 @@ function PdfUploader() {
 }
 
 export default function Home() {
+  const { data: session, status } = useSession();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (status === "unauthenticated") {
+      router.push("/login");
+    }
+  }, [status, router]);
+
+  const apiToken = session?.apiToken || "";
+
   const [chats, setChats] = useState<ChatSession[]>([]);
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -209,7 +223,7 @@ export default function Home() {
 
   const fetchChats = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/chats`, { headers: NGROK_HEADERS });
+      const res = await fetch(`${API_URL}/api/chats`, { headers: getHeaders(apiToken) });
       if (res.ok) {
         const data = await res.json();
         setChats(data.chats);
@@ -231,7 +245,7 @@ export default function Home() {
 
   const createNewChat = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/chats`, { method: "POST", headers: NGROK_HEADERS });
+      const res = await fetch(`${API_URL}/api/chats`, { method: "POST", headers: getHeaders(apiToken) });
       const data = await res.json();
       setChats([data, ...chats]);
       setCurrentChatId(data.id);
@@ -243,7 +257,7 @@ export default function Home() {
   const deleteChat = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      await fetch(`${API_URL}/api/chats/${id}`, { method: "DELETE", headers: NGROK_HEADERS });
+      await fetch(`${API_URL}/api/chats/${id}`, { method: "DELETE", headers: getHeaders(apiToken) });
       const remaining = chats.filter(c => c.id !== id);
       setChats(remaining);
       if (currentChatId === id) {
@@ -257,7 +271,7 @@ export default function Home() {
 
   const fetchMemory = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/memory`, { headers: NGROK_HEADERS });
+      const res = await fetch(`${API_URL}/api/memory`, { headers: getHeaders(apiToken) });
       const data = await res.json();
       setPersonaMemory(data.persona);
     } catch (e) {
@@ -272,7 +286,7 @@ export default function Home() {
     // 1. Fetch messages
     const loadMessages = async () => {
       try {
-        const res = await fetch(`${API_URL}/api/chats/${currentChatId}/messages`, { headers: NGROK_HEADERS });
+        const res = await fetch(`${API_URL}/api/chats/${currentChatId}/messages`, { headers: getHeaders(apiToken) });
         const data = await res.json();
         // API returns { role, content }, map to our state format
         setMessages(data.messages.map((m: { role: string; content: string }) => ({ role: m.role === "assistant" ? "eno" : "user", text: m.content })));
@@ -421,6 +435,7 @@ export default function Home() {
         formData.append("chat_id", currentChatId!);
         try {
           const res = await fetch(`${API_URL}/api/ingest/chat_file`, {
+            headers: { Authorization: `Bearer ${apiToken}` },
             method: "POST",
             body: formData,
             headers: NGROK_HEADERS
@@ -475,6 +490,7 @@ export default function Home() {
           formData.append("file", audioBlob, "audio.webm");
 
           const res = await fetch(`${API_URL}/api/transcribe`, {
+            headers: { Authorization: `Bearer ${apiToken}` },
             method: "POST",
             headers: { "ngrok-skip-browser-warning": "true" },
             body: formData,
