@@ -203,6 +203,14 @@ ABSOLUTE RULES:
                 role = "user" if mem["role"] == "user" else "model"
                 content = augmented_message if i == len(history[-10:]) - 1 and mem["role"] == "user" else mem['content']
                 
+                # --- STRIP @become COMMANDS FROM VISIBLE HISTORY ---
+                if role == "user":
+                    if content.strip().startswith("@become"):
+                        content = "Hello! Please introduce yourself and stay in character."
+                    elif content.strip().startswith("@/become"):
+                        content = "Hello! Please introduce yourself."
+                # ---------------------------------------------------
+
                 # If the first message is from the user, it merges with the system prompt block
                 if i == 0 and role == "user":
                     prompt += f"{content}<end_of_turn>\n"
@@ -215,6 +223,15 @@ ABSOLUTE RULES:
             for i, mem in enumerate(history[-10:]):
                 role = "user" if mem["role"] == "user" else "assistant"
                 content = augmented_message if i == len(history[-10:]) - 1 and role == "user" else mem['content']
+                
+                # --- STRIP @become COMMANDS FROM VISIBLE HISTORY ---
+                if role == "user":
+                    if content.strip().startswith("@become"):
+                        content = "Hello! Please introduce yourself and stay in character."
+                    elif content.strip().startswith("@/become"):
+                        content = "Hello! Please introduce yourself."
+                # ---------------------------------------------------
+
                 prompt += f"<|im_start|>{role}\n{content}<|im_end|>\n"
             prompt += "<|im_start|>assistant\n"
         
