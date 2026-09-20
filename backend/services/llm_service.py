@@ -86,7 +86,7 @@ class LLMService:
             import mlx_lm.sample_utils as su
             
             try:
-                sampler = su.make_sampler(temp=0.75, repetition_penalty=1.03, repetition_context_size=30)
+                sampler = su.make_sampler(temp=0.75, repetition_penalty=1.1, repetition_context_size=100)
             except Exception:
                 sampler = su.make_sampler(temp=0.75)
 
