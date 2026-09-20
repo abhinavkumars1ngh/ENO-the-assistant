@@ -16,64 +16,64 @@ STOP_PATTERNS = [
 
 class LLMService:
     def __init__(self):
-        self.models = {}
-        
-        # 1. Load Gemma (Standard)
+        # We will lazy-load models to save massive amounts of RAM and prevent OS swapping!
+        self.active_model_name = None
+        self.active_model_data = None
+        self.model_paths = {
+            "standard": "/Users/abhinavkumarsingh/ENO/mlx_models/gemma-2-2b-it-4bit",
+            "bro": "/Users/abhinavkumarsingh/ENO/qwen_local_weights"
+        }
+
+    def _get_model(self, model_type: str):
+        if self.active_model_name == model_type and self.active_model_data:
+            return self.active_model_data
+
+        # Unload the old model from GPU memory to prevent Apple Silicon from swapping
+        if self.active_model_data is not None:
+            print(f"Unloading model {self.active_model_name} from memory...")
+            del self.active_model_data
+            self.active_model_data = None
+            self.active_model_name = None
+            import gc
+            gc.collect()
+
+        print(f"Loading MLX model ({model_type}): {self.model_paths[model_type]}")
         try:
-            print("Loading Standard MLX model: mlx_models/gemma-2-2b-it-4bit")
-            m_gemma, t_gemma = mlx_lm.load("/Users/abhinavkumarsingh/ENO/mlx_models/gemma-2-2b-it-4bit")
+            m, t = mlx_lm.load(self.model_paths[model_type])
             
-            # Collect stop tokens for Gemma
-            stop_ids_gemma = set()
+            # Collect stop tokens
+            stop_ids = set()
             for special in ["<|im_end|>", "<|im_start|>", "<|endoftext|>", "<eos>", "<end_of_turn>"]:
-                ids = t_gemma.encode(special, add_special_tokens=False)
-                stop_ids_gemma.update(ids)
-            if hasattr(t_gemma, 'eos_token_id') and t_gemma.eos_token_id is not None:
-                stop_ids_gemma.add(t_gemma.eos_token_id)
-                
-            self.models["standard"] = {
-                "model": m_gemma,
-                "tokenizer": t_gemma,
-                "stop_token_ids": stop_ids_gemma
+                ids = t.encode(special, add_special_tokens=False)
+                stop_ids.update(ids)
+            if hasattr(t, 'eos_token_id') and t.eos_token_id is not None:
+                stop_ids.add(t.eos_token_id)
+
+            self.active_model_data = {
+                "model": m,
+                "tokenizer": t,
+                "stop_token_ids": stop_ids
             }
-            print("Standard (Gemma) model loaded!")
+            self.active_model_name = model_type
+            print(f"{model_type.capitalize()} model loaded successfully!")
+            return self.active_model_data
         except Exception as e:
-            print(f"Failed to load Gemma: {e}")
-            
-        # 2. Load Qwen (Bro)
-        try:
-            print("Loading Bro MLX model: /Users/abhinavkumarsingh/ENO/qwen_local_weights")
-            m_qwen, t_qwen = mlx_lm.load("/Users/abhinavkumarsingh/ENO/qwen_local_weights")
-            
-            # Collect stop tokens for Qwen
-            stop_ids_qwen = set()
-            for special in ["<|im_end|>", "<|im_start|>", "<|endoftext|>"]:
-                ids = t_qwen.encode(special, add_special_tokens=False)
-                stop_ids_qwen.update(ids)
-            if hasattr(t_qwen, 'eos_token_id') and t_qwen.eos_token_id is not None:
-                stop_ids_qwen.add(t_qwen.eos_token_id)
-                
-            self.models["bro"] = {
-                "model": m_qwen,
-                "tokenizer": t_qwen,
-                "stop_token_ids": stop_ids_qwen
-            }
-            print("Bro (Qwen) model loaded!")
-        except Exception as e:
-            print(f"Failed to load Qwen: {e}")
+            print(f"Failed to load {model_type}: {e}")
+            return None
 
     async def stream_generate(self, prompt: str, max_tokens: int = 512, temp: float = 0.7, model_type: str = "standard") -> AsyncGenerator[str, None]:
-        if model_type not in self.models:
-            # Fallback to whatever is available
-            available = list(self.models.keys())
-            if not available:
-                yield "I am offline. No models could be loaded."
-                return
-            model_type = available[0]
+        if model_type not in self.model_paths:
+            # Fallback to standard
+            model_type = "standard"
             
-        target_model = self.models[model_type]["model"]
-        target_tokenizer = self.models[model_type]["tokenizer"]
-        stop_ids = self.models[model_type]["stop_token_ids"]
+        model_data = self._get_model(model_type)
+        if not model_data:
+            yield "I am offline. The model failed to load."
+            return
+
+        target_model = model_data["model"]
+        target_tokenizer = model_data["tokenizer"]
+        stop_ids = model_data["stop_token_ids"]
 
         tokens_generated = 0
         current_text = ""
