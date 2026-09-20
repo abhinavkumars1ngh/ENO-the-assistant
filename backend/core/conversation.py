@@ -184,9 +184,7 @@ class ConversationEngine:
             for i, mem in enumerate(history[-10:]):
                 role = "user" if mem["role"] == "user" else "model"
                 content = augmented_message if i == len(history[-10:]) - 1 and mem["role"] == "user" else mem['content']
-                # Sanitize old history to prevent LLM from reading its past broken tags and getting confused
-                if role != "user":
-                    content = re.sub(r'^\s*(?:\[(?:.*?MOOD:)?\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\]\n]+)?\]|(?:.*?MOOD:)\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\n]+)?)\s*', '', content, flags=re.IGNORECASE)
+
                 
                 # --- STRIP @become COMMANDS FROM VISIBLE HISTORY ---
                 if role == "user":
