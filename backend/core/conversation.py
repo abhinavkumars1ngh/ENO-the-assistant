@@ -240,7 +240,7 @@ class ConversationEngine:
                 if len(buffer) >= 150 or ("]" in buffer) or (not buffer.lstrip().startswith("[") and ("\n" in buffer or len(buffer) > 20)):
                     cleaned = self._clean_response(buffer)
                     # MOOD & NAME EXTRACTION (Strict so it doesn't eat words)
-                    mood_match = re.search(r'^\s*(?:\[(?:MOOD:)?\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\]\n]+))?\]|MOOD:\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\n]+))?)', cleaned, re.IGNORECASE)
+                    mood_match = re.search(r'^\s*(?:\[(?:.*?MOOD:)?\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\]\n]+))?\]|(?:.*?MOOD:)\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\n]+))?)', cleaned, re.IGNORECASE)
                     if mood_match:
                         if mood_match.group(1):
                             mood = mood_match.group(1).strip()
@@ -250,7 +250,7 @@ class ConversationEngine:
                             name = mood_match.group(4).strip() if mood_match.group(4) else "Persona"
                         
                         # Strip out the entire tag from the start of the message
-                        cleaned = re.sub(r'^\s*(?:\[(?:MOOD:)?\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\]\n]+)?\]|MOOD:\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\n]+)?)\s*', '', cleaned, flags=re.IGNORECASE)
+                        cleaned = re.sub(r'^\s*(?:\[(?:.*?MOOD:)?\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\]\n]+)?\]|(?:.*?MOOD:)\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\n]+)?)\s*', '', cleaned, flags=re.IGNORECASE)
                         yield {"type": "mood", "content": mood, "name": name}
                         
                     if cleaned:
@@ -259,14 +259,14 @@ class ConversationEngine:
                     flushed = True
             else:
                 # Secretly strip any trailing [MOOD:] tags that slip through
-                safe_chunk = re.sub(r'\[(?:MOOD:)?\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\]\\n]+)?\]', '', chunk, flags=re.IGNORECASE)
+                safe_chunk = re.sub(r'\[(?:.*?MOOD:)?\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\]\\n]+)?\]', '', chunk, flags=re.IGNORECASE)
                 full_response += safe_chunk
                 yield {"type": "token", "content": safe_chunk}
         
         # Flush remaining buffer if response was shorter than 120 chars
         if not flushed and buffer:
             cleaned = self._clean_response(buffer)
-            mood_match = re.search(r'^\s*(?:\[(?:MOOD:)?\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\]\n]+))?\]|MOOD:\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\n]+))?)', cleaned, re.IGNORECASE)
+            mood_match = re.search(r'^\s*(?:\[(?:.*?MOOD:)?\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\]\n]+))?\]|(?:.*?MOOD:)\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\n]+))?)', cleaned, re.IGNORECASE)
             if mood_match:
                 if mood_match.group(1):
                     mood = mood_match.group(1).strip()
@@ -274,7 +274,7 @@ class ConversationEngine:
                 else:
                     mood = mood_match.group(3).strip()
                     name = mood_match.group(4).strip() if mood_match.group(4) else "Persona"
-                cleaned = re.sub(r'^\s*(?:\[(?:MOOD:)?\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\]\n]+)?\]|MOOD:\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\n]+)?)\s*', '', cleaned, flags=re.IGNORECASE)
+                cleaned = re.sub(r'^\s*(?:\[(?:.*?MOOD:)?\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\]\n]+)?\]|(?:.*?MOOD:)\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\n]+)?)\s*', '', cleaned, flags=re.IGNORECASE)
                 yield {"type": "mood", "content": mood, "name": name}
             if cleaned:
                 full_response = cleaned
