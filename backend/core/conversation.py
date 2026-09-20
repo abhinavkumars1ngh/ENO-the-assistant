@@ -279,13 +279,18 @@ ABSOLUTE RULES:
                 buffer += chunk
                 if len(buffer) >= 120 or "\n" in buffer:
                     cleaned = self._clean_response(buffer)
-                    # MOOD & NAME EXTRACTION
-                    mood_match = re.search(r'^\s*\[?(?:MOOD:)?\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\]\\n]+))?\]?', cleaned, re.IGNORECASE)
+                    # MOOD & NAME EXTRACTION (Strict so it doesn't eat words)
+                    mood_match = re.search(r'^\s*(?:\[(?:MOOD:)?\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\]\n]+))?\]|MOOD:\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\n]+))?)', cleaned, re.IGNORECASE)
                     if mood_match:
-                        mood = mood_match.group(1).strip()
-                        name = mood_match.group(2).strip() if mood_match.group(2) else "Persona"
+                        if mood_match.group(1):
+                            mood = mood_match.group(1).strip()
+                            name = mood_match.group(2).strip() if mood_match.group(2) else "Persona"
+                        else:
+                            mood = mood_match.group(3).strip()
+                            name = mood_match.group(4).strip() if mood_match.group(4) else "Persona"
+                        
                         # Strip out the entire tag from the start of the message
-                        cleaned = re.sub(r'^\s*\[?(?:MOOD:)?\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\]\\n]+)?\]?\s*', '', cleaned, flags=re.IGNORECASE)
+                        cleaned = re.sub(r'^\s*(?:\[(?:MOOD:)?\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\]\n]+)?\]|MOOD:\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\n]+)?)\s*', '', cleaned, flags=re.IGNORECASE)
                         yield {"type": "mood", "content": mood, "name": name}
                         
                     if cleaned:
@@ -301,7 +306,7 @@ ABSOLUTE RULES:
         # Flush remaining buffer if response was shorter than 120 chars
         if not flushed and buffer:
             cleaned = self._clean_response(buffer)
-            mood_match = re.search(r'^\s*\[?(?:MOOD:)?\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\]\\n]+))?\]?', cleaned, re.IGNORECASE)
+            mood_match = re.search(r'^\s*(?:\[(?:MOOD:)?\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\]\n]+))?\]|MOOD:\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\n]+))?)', cleaned, re.IGNORECASE)
             if mood_match:
                 if mood_match.group(1):
                     mood = mood_match.group(1).strip()
@@ -309,7 +314,7 @@ ABSOLUTE RULES:
                 else:
                     mood = mood_match.group(3).strip()
                     name = mood_match.group(4).strip() if mood_match.group(4) else "Persona"
-                cleaned = re.sub(r'^\s*\[?(?:MOOD:)?\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\]\\n]+)?\]?\s*', '', cleaned, flags=re.IGNORECASE)
+                cleaned = re.sub(r'^\s*(?:\[(?:MOOD:)?\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\]\n]+)?\]|MOOD:\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\n]+)?)\s*', '', cleaned, flags=re.IGNORECASE)
                 yield {"type": "mood", "content": mood, "name": name}
             if cleaned:
                 full_response = cleaned
