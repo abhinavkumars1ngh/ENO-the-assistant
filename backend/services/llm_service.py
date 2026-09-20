@@ -75,67 +75,43 @@ class LLMService:
         target_tokenizer = self.models[model_type]["tokenizer"]
         stop_ids = self.models[model_type]["stop_token_ids"]
 
-        # Tokenize the prompt
-        inputs = target_tokenizer.encode(prompt, return_tensors="np")
-        prompt_tokens = mx.array(inputs[0])
-
         tokens_generated = 0
-        all_token_ids: list[int] = []  # Accumulate all generated token IDs
-        prev_decoded_len = 0           # Character count already yielded
+        current_text = ""
 
-        for (token, prob) in generate_step(prompt_tokens, target_model, temp=temp):
-            if tokens_generated >= max_tokens:
-                break
+        # Using the highly optimized stream_generate from newer MLX versions
+        from mlx_lm import stream_generate as mlx_stream_generate
+        
+        gen = mlx_stream_generate(
+            target_model, 
+            target_tokenizer, 
+            prompt, 
+            max_tokens=max_tokens, 
+            temp=temp
+        )
 
-            token_id = token if isinstance(token, int) else token.item()
+        for res in gen:
+            token_id = res.token
             if token_id in stop_ids:
                 break
 
-            all_token_ids.append(token_id)
-
-            # Optimization: Only decode the last 20 tokens to handle multi-byte chars,
-            # instead of re-decoding the entire history which is O(N^2).
-            decode_window = all_token_ids[-20:]
-            current_window_text = target_tokenizer.decode(decode_window, skip_special_tokens=False)
-            
-            # We track how much of this window we've already yielded
-            # prev_decoded_len refers to the total length of ALL decoded text, 
-            # so we just maintain full current_text for pattern matching.
-            
-            try:
-                # We still decode all to keep current_text accurate for stop patterns, 
-                # but MLX tokenizers are fast enough. The real bottleneck is asyncio yielding.
-                current_text = target_tokenizer.decode(all_token_ids, skip_special_tokens=False)
-            except Exception:
-                tokens_generated += 1
-                continue
-
-            new_chunk = current_text[prev_decoded_len:]
-
-            if not new_chunk or current_text.endswith('\ufffd') or any(current_text.endswith(p) for p in ["<end_of", "<start_of", "<|im_", "<|end", "<eos"]):
-                tokens_generated += 1
-                continue
+            text_chunk = res.text
+            current_text += text_chunk
 
             should_stop = False
             for pattern in STOP_PATTERNS:
-                if pattern in current_text[-50:]:  # Only check the end of the string
-                    stop_idx = current_text.rfind(pattern)
-                    if stop_idx >= prev_decoded_len:
-                        clean_chunk = current_text[prev_decoded_len:stop_idx]
-                        if clean_chunk:
-                            yield clean_chunk
+                # If a stop pattern is detected in the latest text, break
+                if pattern in current_text[-50:]:
+                    # Don't yield the chunk that contains the stop pattern
                     should_stop = True
                     break
 
             if should_stop:
                 break
 
-            yield new_chunk
-            prev_decoded_len = len(current_text)
+            yield text_chunk
             tokens_generated += 1
             
-            # Optimization: Only yield to the event loop every 4 tokens to prevent blocking,
-            # but avoid the massive overhead of context switching on every single token.
+            # Yield to event loop occasionally to prevent blocking FastAPI
             if tokens_generated % 4 == 0:
                 await asyncio.sleep(0)
 
