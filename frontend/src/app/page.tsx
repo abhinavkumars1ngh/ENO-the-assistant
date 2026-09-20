@@ -307,7 +307,7 @@ export default function Home() {
       if (isUnmounted || !currentChatId) return;
       if (wsRef.current) wsRef.current.close();
       
-      ws = new WebSocket(`${WS_URL}/ws/chat/${currentChatId}`);
+      ws = new WebSocket(`${WS_URL}/ws/chat/${currentChatId}?token=${apiToken}`);
       ws.onopen = () => {
         setIsConnected(true);
         console.log("WebSocket connected.");
