@@ -279,7 +279,7 @@ ABSOLUTE RULES:
                 if len(buffer) >= 80:
                     cleaned = self._clean_response(buffer)
                     # MOOD EXTRACTION
-                    mood_match = re.search(r'\[(?:MOOD:)?\s*([^\|\]]+)(?:\|\s*NAME:\s*([^\]]+))?\]', cleaned, re.IGNORECASE)
+                    mood_match = re.search(r'^\s*\[?(?:MOOD:)?\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\]\n]+))?\]?', cleaned, re.IGNORECASE)
                     if mood_match:
                         mood = mood_match.group(1).strip()
                         cleaned = re.sub(r'\[(MOOD:)?\s*[^\]]+\]\s*', '', cleaned, flags=re.IGNORECASE)
@@ -296,7 +296,7 @@ ABSOLUTE RULES:
         # Flush remaining buffer if response was shorter than 80 chars
         if not flushed and buffer:
             cleaned = self._clean_response(buffer)
-            mood_match = re.search(r'\[(?:MOOD:)?\s*([^\|\]]+)(?:\|\s*NAME:\s*([^\]]+))?\]', cleaned, re.IGNORECASE)
+            mood_match = re.search(r'^\s*\[?(?:MOOD:)?\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\]\n]+))?\]?', cleaned, re.IGNORECASE)
             if mood_match:
                 mood = mood_match.group(1).strip()
                 cleaned = re.sub(r'\[(MOOD:)?\s*[^\]]+\]\s*', '', cleaned, flags=re.IGNORECASE)
