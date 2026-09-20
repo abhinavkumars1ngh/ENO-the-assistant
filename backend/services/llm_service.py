@@ -84,8 +84,7 @@ class LLMService:
             target_model, 
             target_tokenizer, 
             prompt, 
-            max_tokens=max_tokens, 
-            temp=temp
+            max_tokens=max_tokens
         )
 
         for res in gen:
