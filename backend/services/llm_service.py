@@ -79,12 +79,16 @@ class LLMService:
 
         # Using the highly optimized stream_generate from newer MLX versions
         from mlx_lm import stream_generate as mlx_stream_generate
+        import mlx_lm.sample_utils as su
         
+        sampler = su.make_sampler(temp=temp)
+
         gen = mlx_stream_generate(
             target_model, 
             target_tokenizer, 
             prompt, 
-            max_tokens=max_tokens
+            max_tokens=max_tokens,
+            sampler=sampler
         )
 
         for res in gen:
