@@ -211,6 +211,7 @@ export default function Home() {
   const [isConnected, setIsConnected] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [aiMood, setAiMood] = useState<string>("Neutral");
+  const [aiName, setAiName] = useState<string>("ENO");
   
   // Modals
   const [activeModal, setActiveModal] = useState<"courses" | "memory" | "settings" | null>(null);
@@ -358,6 +359,7 @@ export default function Home() {
           setMessages((prev) => [...prev, { role: "user", text: data.content }]);
         } else if (data.type === "mood") {
           setAiMood(data.content);
+          if (data.name) setAiName(data.name);
         }
       };
       wsRef.current = ws;
@@ -670,7 +672,7 @@ export default function Home() {
                         <Bot className="w-4 h-4 text-white" />
                       </div>
                       <div className="absolute left-0 bottom-full mb-2 hidden group-hover:flex flex-col bg-zinc-800 text-xs text-white p-2.5 rounded-xl whitespace-nowrap shadow-xl border border-white/10 z-50 animate-in fade-in zoom-in-95 duration-200">
-                        <span className="font-semibold text-indigo-400">{getActivePersonaName()}</span>
+                        <span className="font-semibold text-indigo-400">{aiName}</span>
                         <span className="text-zinc-400 mt-0.5">Mood: {aiMood}</span>
                       </div>
                     </div>
