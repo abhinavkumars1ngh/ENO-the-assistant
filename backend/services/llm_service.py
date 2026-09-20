@@ -22,6 +22,8 @@ class LLMService:
             "standard": "/Users/abhinavkumarsingh/ENO/mlx_models/gemma-2-2b-it-4bit",
             "bro": "/Users/abhinavkumarsingh/ENO/qwen_local_weights"
         }
+        # Global lock to prevent concurrent generations from OOMing the Mac or corrupting KV cache
+        self.generation_lock = asyncio.Lock()
 
     def _get_model(self, model_type: str):
         if self.active_model_name == model_type and self.active_model_data:
@@ -61,60 +63,61 @@ class LLMService:
             return None
 
     async def stream_generate(self, prompt: str, max_tokens: int = 512, temp: float = 0.7, model_type: str = "standard") -> AsyncGenerator[str, None]:
-        if model_type not in self.model_paths:
-            # Fallback to standard
-            model_type = "standard"
+        async with self.generation_lock:
+            if model_type not in self.model_paths:
+                # Fallback to standard
+                model_type = "standard"
+                
+            model_data = self._get_model(model_type)
+            if not model_data:
+                yield "I am offline. The model failed to load."
+                return
+
+            target_model = model_data["model"]
+            target_tokenizer = model_data["tokenizer"]
+            stop_ids = model_data["stop_token_ids"]
+
+            tokens_generated = 0
+            current_text = ""
+
+            # Using the highly optimized stream_generate from newer MLX versions
+            from mlx_lm import stream_generate as mlx_stream_generate
+            import mlx_lm.sample_utils as su
             
-        model_data = self._get_model(model_type)
-        if not model_data:
-            yield "I am offline. The model failed to load."
-            return
+            sampler = su.make_sampler(temp=temp)
 
-        target_model = model_data["model"]
-        target_tokenizer = model_data["tokenizer"]
-        stop_ids = model_data["stop_token_ids"]
+            gen = mlx_stream_generate(
+                target_model, 
+                target_tokenizer, 
+                prompt, 
+                max_tokens=max_tokens,
+                sampler=sampler
+            )
 
-        tokens_generated = 0
-        current_text = ""
-
-        # Using the highly optimized stream_generate from newer MLX versions
-        from mlx_lm import stream_generate as mlx_stream_generate
-        import mlx_lm.sample_utils as su
-        
-        sampler = su.make_sampler(temp=temp)
-
-        gen = mlx_stream_generate(
-            target_model, 
-            target_tokenizer, 
-            prompt, 
-            max_tokens=max_tokens,
-            sampler=sampler
-        )
-
-        for res in gen:
-            token_id = res.token
-            if token_id in stop_ids:
-                break
-
-            text_chunk = res.text
-            current_text += text_chunk
-
-            should_stop = False
-            for pattern in STOP_PATTERNS:
-                # If a stop pattern is detected in the latest text, break
-                if pattern in current_text[-50:]:
-                    # Don't yield the chunk that contains the stop pattern
-                    should_stop = True
+            for res in gen:
+                token_id = res.token
+                if token_id in stop_ids:
                     break
 
-            if should_stop:
-                break
+                text_chunk = res.text
+                current_text += text_chunk
 
-            yield text_chunk
-            tokens_generated += 1
-            
-            # Yield to event loop occasionally to prevent blocking FastAPI
-            if tokens_generated % 4 == 0:
-                await asyncio.sleep(0)
+                should_stop = False
+                for pattern in STOP_PATTERNS:
+                    # If a stop pattern is detected in the latest text, break
+                    if pattern in current_text[-50:]:
+                        # Don't yield the chunk that contains the stop pattern
+                        should_stop = True
+                        break
+
+                if should_stop:
+                    break
+
+                yield text_chunk
+                tokens_generated += 1
+                
+                # Yield to event loop occasionally to prevent blocking FastAPI
+                if tokens_generated % 4 == 0:
+                    await asyncio.sleep(0)
 
 llm_service = LLMService()
