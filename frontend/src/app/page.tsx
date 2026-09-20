@@ -210,6 +210,7 @@ export default function Home() {
   const [isRecording, setIsRecording] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [aiMood, setAiMood] = useState<string>("Neutral");
   
   // Modals
   const [activeModal, setActiveModal] = useState<"courses" | "memory" | "settings" | null>(null);
@@ -339,6 +340,8 @@ export default function Home() {
           fetchChats(); // Refresh titles
         } else if (data.type === "stt_result") {
           setMessages((prev) => [...prev, { role: "user", text: data.content }]);
+        } else if (data.type === "mood") {
+          setAiMood(data.content);
         }
       };
       wsRef.current = ws;
