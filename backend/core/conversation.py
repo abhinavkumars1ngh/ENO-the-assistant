@@ -1,6 +1,7 @@
 from backend.services.llm_service import llm_service
 from backend.core.mcp_client import mcp_manager
 from backend.core.database import SessionLocal
+from backend.core.state import state_manager
 from backend.core.prompts import build_persona_prompt, build_default_prompt, get_persona_preset
 from backend.models.schema import Message, Conversation, Memory
 import json
@@ -189,10 +190,7 @@ class ConversationEngine:
                 
                 # --- STRIP @become COMMANDS FROM VISIBLE HISTORY ---
                 if role == "user":
-                    if content.strip().startswith("@become"):
-                        content = "Hello! Please introduce yourself and stay in character."
-                    elif content.strip().startswith("@/become"):
-                        content = "Hello! Please introduce yourself."
+                    content = state_manager.sanitize_prompt_for_llm(content)
                 # ---------------------------------------------------
 
                 # Inject system prompt into the FINAL user message to maximize attention for Gemma
@@ -210,10 +208,7 @@ class ConversationEngine:
                 
                 # --- STRIP @become COMMANDS FROM VISIBLE HISTORY ---
                 if role == "user":
-                    if content.strip().startswith("@become"):
-                        content = "Hello! Please introduce yourself and stay in character."
-                    elif content.strip().startswith("@/become"):
-                        content = "Hello! Please introduce yourself."
+                    content = state_manager.sanitize_prompt_for_llm(content)
                 # ---------------------------------------------------
 
                 prompt += f"<|im_start|>{role}\n{content}<|im_end|>\n"
