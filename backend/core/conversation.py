@@ -187,6 +187,7 @@ ABSOLUTE RULES:
 - NEVER refer to yourself as an AI, assistant, or language model.
 - Adopt the tone, mannerisms, knowledge, and style of the specified persona entirely.
 - NEVER repeat previous responses. Always move the conversation forward naturally.
+- ANTI-MIRRORING: Do NOT simply repeat or parrot the user's phrasing, words, or sentence structure. Formulate completely original thoughts. Lead the conversation, have your own agency, and do not act like an echo.
 - Be highly creative and reactive to the user's specific messages.
 - Respond directly without any generic bot openers.
 - STRICT LANGUAGE ENFORCEMENT: You must exclusively speak, think, and write in English. Do NOT output a single word of Mandarin, Chinese, or any other language, even if requested or if it feels natural.
@@ -302,8 +303,12 @@ ABSOLUTE RULES:
             cleaned = self._clean_response(buffer)
             mood_match = re.search(r'^\s*\[?(?:MOOD:)?\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\]\\n]+))?\]?', cleaned, re.IGNORECASE)
             if mood_match:
-                mood = mood_match.group(1).strip()
-                name = mood_match.group(2).strip() if mood_match.group(2) else "Persona"
+                if mood_match.group(1):
+                    mood = mood_match.group(1).strip()
+                    name = mood_match.group(2).strip() if mood_match.group(2) else "Persona"
+                else:
+                    mood = mood_match.group(3).strip()
+                    name = mood_match.group(4).strip() if mood_match.group(4) else "Persona"
                 cleaned = re.sub(r'^\s*\[?(?:MOOD:)?\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\]\\n]+)?\]?\s*', '', cleaned, flags=re.IGNORECASE)
                 yield {"type": "mood", "content": mood, "name": name}
             if cleaned:
