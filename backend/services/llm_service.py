@@ -1,5 +1,4 @@
 import mlx_lm
-from mlx_lm.utils import generate_step
 import mlx.core as mx
 import asyncio
 from typing import AsyncGenerator
