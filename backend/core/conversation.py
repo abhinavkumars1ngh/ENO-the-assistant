@@ -222,60 +222,50 @@ class ConversationEngine:
             yield {"type": "token", "content": identity_prefix}
             
         buffer = ""
-        flushed = False
-        
         async for chunk in llm_service.stream_generate(
             prompt, 
             max_tokens=config["max_tokens"], 
             temp=config["temp"],
             model_type=model_type
         ):
-            if not flushed:
-                # Buffer the first ~120 chars to catch multi-token bot openers
-                buffer += chunk
-                if len(buffer) >= 150 or ("]" in buffer) or (not buffer.lstrip().startswith("[") and ("\n" in buffer or len(buffer) > 20)):
-                    cleaned = self._clean_response(buffer)
-                    # MOOD & NAME EXTRACTION (Strict so it doesn't eat words)
-                    mood_match = re.search(r'^\s*(?:\[(?:.*?MOOD:)?\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\]\n]+))?\]|(?:.*?MOOD:)\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\n]+))?)', cleaned, re.IGNORECASE)
-                    if mood_match:
-                        if mood_match.group(1):
-                            mood = mood_match.group(1).strip()
-                            name = mood_match.group(2).strip() if mood_match.group(2) else "Persona"
-                        else:
-                            mood = mood_match.group(3).strip()
-                            name = mood_match.group(4).strip() if mood_match.group(4) else "Persona"
-                        
-                        # Strip out the entire tag from the start of the message
-                        cleaned = re.sub(r'^\s*(?:\[(?:.*?MOOD:)?\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\]\n]+)?\]|(?:.*?MOOD:)\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\n]+)?)\s*', '', cleaned, flags=re.IGNORECASE)
-                        yield {"type": "mood", "content": mood, "name": name}
-                        
-                    if cleaned:
-                        full_response = cleaned
-                        yield {"type": "token", "content": cleaned}
-                    flushed = True
-            else:
-                # Secretly strip any trailing [MOOD:] tags that slip through
-                safe_chunk = re.sub(r'\[(?:.*?MOOD:)?\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\]\\n]+)?\]', '', chunk, flags=re.IGNORECASE)
-                full_response += safe_chunk
-                yield {"type": "token", "content": safe_chunk}
-        
-        # Flush remaining buffer if response was shorter than 120 chars
-        if not flushed and buffer:
-            cleaned = self._clean_response(buffer)
-            mood_match = re.search(r'^\s*(?:\[(?:.*?MOOD:)?\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\]\n]+))?\]|(?:.*?MOOD:)\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\n]+))?)', cleaned, re.IGNORECASE)
+            buffer += chunk
+            
+            # Wait for closing bracket if we are currently inside a bracket
+            if "[" in buffer and "]" not in buffer:
+                continue
+                
+            # We have a full segment to process
+            # Extract mood if present ANYWHERE in the buffer
+            mood_match = re.search(r'\[(?:.*?MOOD:)?\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\]\n]+))?\]', buffer, re.IGNORECASE)
             if mood_match:
-                if mood_match.group(1):
-                    mood = mood_match.group(1).strip()
-                    name = mood_match.group(2).strip() if mood_match.group(2) else "Persona"
-                else:
-                    mood = mood_match.group(3).strip()
-                    name = mood_match.group(4).strip() if mood_match.group(4) else "Persona"
-                cleaned = re.sub(r'^\s*(?:\[(?:.*?MOOD:)?\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\]\n]+)?\]|(?:.*?MOOD:)\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\n]+)?)\s*', '', cleaned, flags=re.IGNORECASE)
+                mood = mood_match.group(1).strip()
+                name = mood_match.group(2).strip() if mood_match.group(2) else "Persona"
                 yield {"type": "mood", "content": mood, "name": name}
-            if cleaned:
-                full_response = cleaned
-                yield {"type": "token", "content": cleaned}
-        
+                
+            # Strip the tag from the buffer
+            safe_buffer = re.sub(r'\[(?:.*?MOOD:)?\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\]\n]+)?\]\s*', '', buffer, flags=re.IGNORECASE)
+            # Remove any generic [System Note: ...] or [CRITICAL...] hallucinations that AI might leak
+            safe_buffer = re.sub(r'\[(?:System Note|CRITICAL).*?\]\s*', '', safe_buffer, flags=re.IGNORECASE)
+            
+            if safe_buffer:
+                full_response += safe_buffer
+                yield {"type": "token", "content": safe_buffer}
+            buffer = ""
+            
+        # Flush whatever is left in buffer
+        if buffer:
+            mood_match = re.search(r'\[(?:.*?MOOD:)?\s*([A-Za-z]+)\s*(?:\|\s*NAME:\s*([^\]\n]+))?\]', buffer, re.IGNORECASE)
+            if mood_match:
+                mood = mood_match.group(1).strip()
+                name = mood_match.group(2).strip() if mood_match.group(2) else "Persona"
+                yield {"type": "mood", "content": mood, "name": name}
+                
+            safe_buffer = re.sub(r'\[(?:.*?MOOD:)?\s*[A-Za-z]+\s*(?:\|\s*NAME:\s*[^\]\n]+)?\]\s*', '', buffer, flags=re.IGNORECASE)
+            safe_buffer = re.sub(r'\[(?:System Note|CRITICAL).*?\]\s*', '', safe_buffer, flags=re.IGNORECASE)
+            if safe_buffer:
+                full_response += safe_buffer
+                yield {"type": "token", "content": safe_buffer}
+
         # 4. Save AI response to DB
         self._add_message(chat_id, "assistant", full_response)
         
