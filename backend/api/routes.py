@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, s
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from backend.core.database import get_db
-from backend.core.auth import get_current_user, create_access_token, get_password_hash
+from backend.core.auth import get_current_user, create_access_token
 from passlib.context import CryptContext
 from backend.models.schema import Conversation, Message, Memory, User
 from backend.services.ingestion import process_pdf_task, process_video_task, process_image_task
