@@ -85,7 +85,7 @@ class LLMService:
             from mlx_lm import stream_generate as mlx_stream_generate
             import mlx_lm.sample_utils as su
             
-                        try:
+            try:
                 sampler = su.make_sampler(temp=0.75, repetition_penalty=1.03, repetition_context_size=30)
             except Exception:
                 sampler = su.make_sampler(temp=0.75)
