@@ -205,6 +205,9 @@ def augment_message_with_content(message: str) -> str:
             # General factual about people/teams
             "is in", "are in", "playing for", "works for", "plays for",
             "nationality", "born in", "from where", "which country", "which team",
+            # Knowledge / Lookup (requested by user)
+            "lyrics", "lyric", "quote", "quotes", "fact", "facts",
+            "who is", "what is the capital of", "how tall", "how old", "population of"
         ]
         if any(trigger in msg_lower for trigger in search_triggers) and len(message) < 300:
             search_results = search_web_selenium(message)
