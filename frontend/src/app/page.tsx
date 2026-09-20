@@ -216,6 +216,22 @@ export default function Home() {
   const [activeModal, setActiveModal] = useState<"courses" | "memory" | "settings" | null>(null);
   const [isVoiceModeOpen, setIsVoiceModeOpen] = useState(false);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const getActivePersonaName = () => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.role === "user" && msg.text) {
+        if (msg.text.startsWith("@/become")) return "ENO";
+        if (msg.text.startsWith("@become ")) {
+           const personaName = msg.text.replace("@become ", "").trim();
+           if (personaName.toLowerCase().includes("girlfriend")) return "Sarah";
+           if (personaName.toLowerCase().includes("pirate")) return "Blackbeard";
+           return personaName;
+        }
+      }
+    }
+    return "ENO";
+  };
+
   const [personaMemory, setPersonaMemory] = useState<string[]>([]);
   
   const wsRef = useRef<WebSocket | null>(null);
@@ -649,8 +665,14 @@ export default function Home() {
               messages.map((msg, idx) => (
                 <div key={idx} className={`flex w-full ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                   {msg.role === "eno" && (
-                    <div className="w-7 h-7 rounded-lg bg-indigo-500 flex items-center justify-center mr-3 flex-shrink-0">
-                      <Bot className="w-4 h-4 text-white" />
+                    <div className="group relative mr-3 flex-shrink-0">
+                      <div className="w-7 h-7 rounded-lg bg-indigo-500 flex items-center justify-center cursor-help">
+                        <Bot className="w-4 h-4 text-white" />
+                      </div>
+                      <div className="absolute left-0 bottom-full mb-2 hidden group-hover:flex flex-col bg-zinc-800 text-xs text-white p-2.5 rounded-xl whitespace-nowrap shadow-xl border border-white/10 z-50 animate-in fade-in zoom-in-95 duration-200">
+                        <span className="font-semibold text-indigo-400">{getActivePersonaName()}</span>
+                        <span className="text-zinc-400 mt-0.5">Mood: {aiMood}</span>
+                      </div>
                     </div>
                   )}
                   <div className={`text-[14px] leading-relaxed ${msg.role === "user" ? "max-w-[80%] px-4 py-3 bg-indigo-600 text-white rounded-2xl rounded-br-sm" : "max-w-[85%] text-zinc-200"}`}>
