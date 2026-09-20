@@ -144,7 +144,7 @@ def main():
     print("\n" + "=" * 50)
     print("✅ Pipeline is running! Eno AI is online.")
     print("🧠 Active Models: Gemma 2 2B (Standard) & Qwen (Bro)")
-    print("Local Frontend: http://localhost:3000")
+    print("Local Frontend: http://localhost:3000/login")
     print("Remote Phone URL: https://frontend-two-topaz-41.vercel.app")
     print("Press Ctrl+C to safely stop the pipeline.")
     print("=" * 50 + "\n")
