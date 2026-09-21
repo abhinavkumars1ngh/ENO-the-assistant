@@ -575,7 +575,7 @@ export default function Home() {
   return (
     <>
       {status === "unauthenticated" && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-950/95 backdrop-blur-md px-4 sm:px-6 lg:px-8">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 sm:px-6 lg:px-8">
           <div className="max-w-md w-full space-y-8 bg-gray-900 p-10 rounded-2xl border border-gray-800 shadow-2xl relative">
             <div>
               <h2 className="mt-2 text-center text-3xl font-extrabold text-white">
@@ -729,7 +729,7 @@ export default function Home() {
                 <Settings className="w-4 h-4" /> Settings
               </button>
               <div className="h-px bg-white/5 my-1 mx-2" />
-              <button onClick={() => signOut({ callbackUrl: '/login' })} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-red-500/10 hover:text-red-400 text-zinc-200 text-sm transition-colors">
+              <button onClick={() => signOut({ callbackUrl: '/' })} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-red-500/10 hover:text-red-400 text-zinc-200 text-sm transition-colors">
                 <LogOut className="w-4 h-4" /> Log out
               </button>
             </div>
