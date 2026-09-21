@@ -23,7 +23,8 @@ const handler = NextAuth({
         if (!credentials?.username || !credentials?.password) return null;
 
         try {
-          const res = await fetch("http://127.0.0.1:8000/api/login", {
+          const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+          const res = await fetch(`${API_URL}/api/login`, {
             method: "POST",
             headers: {
               "Content-Type": "application/x-www-form-urlencoded",
@@ -58,7 +59,8 @@ const handler = NextAuth({
       // If user logged in with Google, we need to sync them with FastAPI
       if (account?.provider === "google" && user?.email) {
         try {
-          const res = await fetch("http://127.0.0.1:8000/api/auth/sync", {
+          const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+          const res = await fetch(`${API_URL}/api/auth/sync`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ email: user.email })
