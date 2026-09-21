@@ -270,8 +270,10 @@ export default function Home() {
 
   // Fetch initial chats
   useEffect(() => {
-    fetchChats();
-  }, []);
+    if (apiToken) {
+      fetchChats();
+    }
+  }, [apiToken]);
 
   const createNewChat = async () => {
     try {
