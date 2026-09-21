@@ -275,7 +275,7 @@ export default function Home() {
     }
   }, [apiToken]);
 
-  const createNewChat = async () => {
+  async function createNewChat() {
     try {
       const res = await fetch(`${API_URL}/api/chats`, { method: "POST", headers: getHeaders(apiToken) });
       const data = await res.json();
