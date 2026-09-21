@@ -236,14 +236,14 @@ class ConversationEngine:
                 
             # We have a full segment to process
             # Extract mood if present ANYWHERE in the buffer
-            mood_match = re.search(r'\[(?:.*?MOOD:)?\s*([^\|\]\n]+?)\s*(?:\|\s*NAME:\s*([^\]\n]+))?\]', buffer, re.IGNORECASE)
+            mood_match = re.search(r'\[(?:.*?MOOD:\s*)([^\|\]\n]+?)\s*(?:\|\s*NAME:\s*([^\]\n]+))?\]', buffer, re.IGNORECASE)
             if mood_match:
                 mood = mood_match.group(1).strip()
                 name = mood_match.group(2).strip() if mood_match.group(2) else "Persona"
                 yield {"type": "mood", "content": mood, "name": name}
                 
             # Strip the tag from the buffer
-            safe_buffer = re.sub(r'\[(?:.*?MOOD:)?\s*[^\|\]\n]+\s*(?:\|\s*NAME:\s*[^\]\n]+)?\]\s*', '', buffer, flags=re.IGNORECASE)
+            safe_buffer = re.sub(r'\[(?:.*?MOOD:\s*[^\|\]\n]+|.*?NAME:\s*[^\]\n]+)(?:\|[^\]]+)?\]\s*', '', buffer, flags=re.IGNORECASE)
             # Remove any generic [System Note: ...] or [CRITICAL...] hallucinations that AI might leak
             safe_buffer = re.sub(r'\[(?:System Note|CRITICAL).*?\]\s*', '', safe_buffer, flags=re.IGNORECASE)
             
@@ -254,13 +254,13 @@ class ConversationEngine:
             
         # Flush whatever is left in buffer
         if buffer:
-            mood_match = re.search(r'\[(?:.*?MOOD:)?\s*([^\|\]\n]+?)\s*(?:\|\s*NAME:\s*([^\]\n]+))?\]', buffer, re.IGNORECASE)
+            mood_match = re.search(r'\[(?:.*?MOOD:\s*)([^\|\]\n]+?)\s*(?:\|\s*NAME:\s*([^\]\n]+))?\]', buffer, re.IGNORECASE)
             if mood_match:
                 mood = mood_match.group(1).strip()
                 name = mood_match.group(2).strip() if mood_match.group(2) else "Persona"
                 yield {"type": "mood", "content": mood, "name": name}
                 
-            safe_buffer = re.sub(r'\[(?:.*?MOOD:)?\s*[^\|\]\n]+\s*(?:\|\s*NAME:\s*[^\]\n]+)?\]\s*', '', buffer, flags=re.IGNORECASE)
+            safe_buffer = re.sub(r'\[(?:.*?MOOD:\s*[^\|\]\n]+|.*?NAME:\s*[^\]\n]+)(?:\|[^\]]+)?\]\s*', '', buffer, flags=re.IGNORECASE)
             safe_buffer = re.sub(r'\[(?:System Note|CRITICAL).*?\]\s*', '', safe_buffer, flags=re.IGNORECASE)
             if safe_buffer:
                 full_response += safe_buffer
