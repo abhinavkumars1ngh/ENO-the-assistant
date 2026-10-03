@@ -1,12 +1,33 @@
 from backend.services.llm_service import llm_service
-from backend.core.mcp_client import mcp_manager
-from backend.core.database import SessionLocal
+from backend.core import config as eno_config
 from backend.core.state import state_manager
 from backend.core.prompts import build_persona_prompt, build_default_prompt, get_persona_preset
-from backend.models.schema import Message, Conversation, Memory
 import json
 import re
-import datetime
+
+# How much client-supplied history we accept per request. The server is stateless: the
+# browser keeps the chat in its on-device vault and sends the recent window with each turn.
+MAX_HISTORY_MESSAGES = 20
+MAX_MESSAGE_CHARS = 8000
+CONTEXT_WINDOW_MESSAGES = 10
+
+
+def normalize_history(raw) -> list[dict]:
+    """Validate and trim client-supplied history into [{role: user|assistant, content: str}]."""
+    out: list[dict] = []
+    if not isinstance(raw, list):
+        return out
+    for item in raw[-MAX_HISTORY_MESSAGES:]:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        content = item.get("content")
+        if role == "eno":
+            role = "assistant"
+        if role not in ("user", "assistant") or not isinstance(content, str) or not content.strip():
+            continue
+        out.append({"role": role, "content": content[:MAX_MESSAGE_CHARS]})
+    return out
 
 def classify_query(message: str) -> dict:
     """Classify the user's query to strategically allocate tokens."""
@@ -42,53 +63,15 @@ def classify_query(message: str) -> dict:
 
 
 class ConversationEngine:
+    """
+    Stateless conversation engine.
+
+    Nothing about a conversation is persisted here: no message table writes, no persona
+    extraction, no logging of bodies. The caller (the websocket) passes in the history the
+    user's device chose to send, and we stream tokens back.
+    """
     def __init__(self):
         pass
-
-    def _get_history(self, chat_id: str) -> list[dict]:
-        db = SessionLocal()
-        try:
-            messages = db.query(Message).filter(Message.conversation_id == chat_id).order_by(Message.timestamp.asc()).all()
-            return [{"role": m.role, "content": m.content} for m in messages]
-        finally:
-            db.close()
-
-    def _add_message(self, chat_id: str, role: str, content: str):
-        db = SessionLocal()
-        try:
-            # Check if chat exists, if not, skip (handled by UI, but safe here)
-            conv = db.query(Conversation).filter(Conversation.id == chat_id).first()
-            if not conv:
-                return
-            
-            new_msg = Message(
-                conversation_id=chat_id,
-                role=role,
-                content=content,
-                timestamp=datetime.datetime.utcnow()
-            )
-            db.add(new_msg)
-            
-            # Update conversation timestamp and potentially title
-            conv.updated = datetime.datetime.utcnow()
-            
-            # Auto-name chat if it's the very first user message
-            if role == "user" and conv.title == "New Chat":
-                conv.title = content[:30] + ("..." if len(content) > 30 else "")
-            
-            db.commit()
-        finally:
-            db.close()
-
-    def _get_persona(self) -> str:
-        db = SessionLocal()
-        try:
-            memories = db.query(Memory).filter(Memory.user_id == 1, Memory.type == "persona").order_by(Memory.timestamp.desc()).all()
-            if not memories:
-                return ""
-            return "\n".join([m.fact for m in memories])
-        finally:
-            db.close()
 
     def _clean_response(self, text: str) -> str:
         text = re.sub(r'^(Eno|assistant|Assistant|eno)\s*:\s*', '', text.strip())
@@ -122,43 +105,41 @@ class ConversationEngine:
             return "That's my god daddy — Abhinav Kumar Singh, the almighty who built me from the ground up and gave me my personality. "
         return None
 
-    async def stream_response(self, chat_id: str, message: str, model_type: str = "standard"):
-        # 1. Add user message to DB
-        self._add_message(chat_id, "user", message)
-        
-        # 2. Get history & config
+    async def stream_response(self, message: str, history: list[dict] | None = None, model_type: str = "standard", chat_id: str | None = None):
+        # 1. Build the working history from what the client sent (nothing is stored server-side)
+        message = message[:MAX_MESSAGE_CHARS]
+        history = normalize_history(history) + [{"role": "user", "content": message}]
+
+        # 2. Config
         config = classify_query(message)
-        history = self._get_history(chat_id)
-        
+
         # Augment the current message with external content if URLs are present
-        from backend.core.scraper import augment_message_with_content
-        augmented_message = augment_message_with_content(message)
-        
-        # 3. Load Persona & RAG Context
-        persona = self._get_persona()
-        persona_text = f"\nUser's Personal Style & Preferences:\n{persona}" if persona else ""
-        
-        # --- RAG INJECTION ---
-        from backend.core.retrieval import retrieval_engine
-        retrieved_docs = []
-        if len(message.strip()) > 10: # Only retrieve for substantive queries
+        augmented_message = message
+        if eno_config.URL_AUGMENT_ENABLED:
             try:
-                retrieved_docs = retrieval_engine.retrieve(message, top_k=10, chat_id=chat_id)
+                from backend.core.scraper import augment_message_with_content
+                augmented_message = augment_message_with_content(message)
             except Exception as e:
-                print(f"RAG Retrieval Error: {e}")
-                
+                print(f"URL augmentation unavailable: {type(e).__name__}")
+
+        # 3. RAG context (local stack only: Qdrant + embedding models)
         rag_text = ""
-        if retrieved_docs:
-            rag_text = "\n\n## RELEVANT KNOWLEDGE BASE CONTEXT:\n"
-            for doc in retrieved_docs:
-                rag_text += f"- {doc['text']}\n"
+        if eno_config.LOCAL_STACK_ENABLED and len(message.strip()) > 10:  # Only retrieve for substantive queries
+            try:
+                from backend.core.retrieval import retrieval_engine
+                retrieved_docs = retrieval_engine.retrieve(message, top_k=10, chat_id=chat_id)
+                if retrieved_docs:
+                    rag_text = "\n\n## RELEVANT KNOWLEDGE BASE CONTEXT:\n"
+                    for doc in retrieved_docs:
+                        rag_text += f"- {doc['text']}\n"
+            except Exception as e:
+                print(f"RAG Retrieval Error: {type(e).__name__}")
         # ---------------------
-        
+
         # --- PERSONA SWITCHING LOGIC ---
         active_persona = None
-        # Check current message and history (most recent first) for @become commands
-        all_messages = history + [{"role": "user", "content": message}]
-        for mem in reversed(all_messages):
+        # Check history (most recent first) for @become commands
+        for mem in reversed(history):
             if mem["role"] == "user":
                 content = mem["content"].strip()
                 if content.startswith("@/become"):
@@ -166,44 +147,65 @@ class ConversationEngine:
                 elif content.startswith("@become "):
                     active_persona = content[len("@become "):].strip()
                     break
-                    
+
         # Modular Prompt Construction
+        # NOTE: server-side "personalization memory" is intentionally not injected: it was
+        # derived from stored chats, which the server no longer keeps.
         if active_persona:
             preset = get_persona_preset(active_persona)
             if preset:
                 active_persona = preset
-            
+
             system_prompt = build_persona_prompt(active_persona, rag_text)
         else:
             system_prompt = build_default_prompt(rag_text)
-            if persona_text:
-                system_prompt += f"\n\n{persona_text}"
 
-        if model_type == "standard":
+        window = history[-CONTEXT_WINDOW_MESSAGES:]
+        # Chat APIs expect the first turn to come from the user
+        while window and window[0]["role"] == "assistant":
+            window = window[1:]
+
+        # Check if we need to force an identity prefix
+        identity_prefix = self._check_identity_trigger(message)
+
+        use_remote = eno_config.LLM_BACKEND == "openai"
+        prompt = None
+        chat_messages = None
+
+        if use_remote:
+            sys_text = system_prompt
+            if identity_prefix:
+                sys_text += f"\n\nYour reply has already begun with: \"{identity_prefix.strip()}\" Continue naturally from exactly that point without repeating it."
+            chat_messages = [{"role": "system", "content": sys_text}]
+            for i, mem in enumerate(window):
+                content = augmented_message if i == len(window) - 1 and mem["role"] == "user" else mem["content"]
+                if mem["role"] == "user":
+                    content = state_manager.sanitize_prompt_for_llm(content)
+                chat_messages.append({"role": mem["role"], "content": content})
+        elif model_type == "standard":
             prompt = ""
-            for i, mem in enumerate(history[-10:]):
+            for i, mem in enumerate(window):
                 role = "user" if mem["role"] == "user" else "model"
-                content = augmented_message if i == len(history[-10:]) - 1 and mem["role"] == "user" else mem['content']
+                content = augmented_message if i == len(window) - 1 and mem["role"] == "user" else mem['content']
 
-                
                 # --- STRIP @become COMMANDS FROM VISIBLE HISTORY ---
                 if role == "user":
                     content = state_manager.sanitize_prompt_for_llm(content)
                 # ---------------------------------------------------
 
                 # Inject system prompt into the FINAL user message to maximize attention for Gemma
-                if i == len(history[-10:]) - 1 and role == "user":
+                if i == len(window) - 1 and role == "user":
                     content = f"{system_prompt}\n\n[USER]: {content}"
 
                 prompt += f"<start_of_turn>{role}\n{content}<end_of_turn>\n"
-                    
+
             prompt += "<start_of_turn>model\n"
         else:
             prompt = f"<|im_start|>system\n{system_prompt}<|im_end|>\n"
-            for i, mem in enumerate(history[-10:]):
+            for i, mem in enumerate(window):
                 role = "user" if mem["role"] == "user" else "assistant"
-                content = augmented_message if i == len(history[-10:]) - 1 and role == "user" else mem['content']
-                
+                content = augmented_message if i == len(window) - 1 and role == "user" else mem['content']
+
                 # --- STRIP @become COMMANDS FROM VISIBLE HISTORY ---
                 if role == "user":
                     content = state_manager.sanitize_prompt_for_llm(content)
@@ -211,29 +213,26 @@ class ConversationEngine:
 
                 prompt += f"<|im_start|>{role}\n{content}<|im_end|>\n"
             prompt += "<|im_start|>assistant\n"
-        
-        full_response = ""
-        
-        # Check if we need to force an identity prefix
-        identity_prefix = self._check_identity_trigger(message)
+
         if identity_prefix:
-            full_response += identity_prefix
-            prompt += identity_prefix
+            if prompt is not None:
+                prompt += identity_prefix
             yield {"type": "token", "content": identity_prefix}
-            
+
         buffer = ""
         async for chunk in llm_service.stream_generate(
-            prompt, 
-            max_tokens=config["max_tokens"], 
+            prompt,
+            max_tokens=config["max_tokens"],
             temp=config["temp"],
-            model_type=model_type
+            model_type=model_type,
+            messages=chat_messages,
         ):
             buffer += chunk
-            
+
             # Wait for closing bracket if we are currently inside a bracket
             if "[" in buffer and "]" not in buffer:
                 continue
-                
+
             # We have a full segment to process
             # Extract mood if present ANYWHERE in the buffer
             mood_match = re.search(r'\[(?:.*?MOOD:\s*)([^\|\]\n]+?)\s*(?:\|\s*NAME:\s*([^\]\n]+))?\]', buffer, re.IGNORECASE)
@@ -241,17 +240,16 @@ class ConversationEngine:
                 mood = mood_match.group(1).strip()
                 name = mood_match.group(2).strip() if mood_match.group(2) else "Persona"
                 yield {"type": "mood", "content": mood, "name": name}
-                
+
             # Strip the tag from the buffer
             safe_buffer = re.sub(r'\[(?:.*?MOOD:\s*[^\|\]\n]+|.*?NAME:\s*[^\]\n]+)(?:\|[^\]]+)?\]\s*', '', buffer, flags=re.IGNORECASE)
             # Remove any generic [System Note: ...] or [CRITICAL...] hallucinations that AI might leak
             safe_buffer = re.sub(r'\[(?:System Note|CRITICAL).*?\]\s*', '', safe_buffer, flags=re.IGNORECASE)
-            
+
             if safe_buffer:
-                full_response += safe_buffer
                 yield {"type": "token", "content": safe_buffer}
             buffer = ""
-            
+
         # Flush whatever is left in buffer
         if buffer:
             mood_match = re.search(r'\[(?:.*?MOOD:\s*)([^\|\]\n]+?)\s*(?:\|\s*NAME:\s*([^\]\n]+))?\]', buffer, re.IGNORECASE)
@@ -259,23 +257,12 @@ class ConversationEngine:
                 mood = mood_match.group(1).strip()
                 name = mood_match.group(2).strip() if mood_match.group(2) else "Persona"
                 yield {"type": "mood", "content": mood, "name": name}
-                
+
             safe_buffer = re.sub(r'\[(?:.*?MOOD:\s*[^\|\]\n]+|.*?NAME:\s*[^\]\n]+)(?:\|[^\]]+)?\]\s*', '', buffer, flags=re.IGNORECASE)
             safe_buffer = re.sub(r'\[(?:System Note|CRITICAL).*?\]\s*', '', safe_buffer, flags=re.IGNORECASE)
             if safe_buffer:
-                full_response += safe_buffer
                 yield {"type": "token", "content": safe_buffer}
 
-        # 4. Save AI response to DB
-        self._add_message(chat_id, "assistant", full_response)
-        
-        # 5. Extract persona in background (fire and forget)
-        from backend.core.memory import memory_engine
-        import asyncio
-        
-        # Only run memory extraction if we have enough history to make it worth it
-        # (Using a simple heuristic: if it's a longer conversation)
-        if len(history) >= 4 and len(history) % 4 == 0:
-            asyncio.create_task(memory_engine.extract_persona_async(chat_id))
+        # The reply is persisted by the client in its on-device vault. Nothing is stored here.
 
 conversation_engine = ConversationEngine()

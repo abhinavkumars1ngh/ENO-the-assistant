@@ -45,11 +45,14 @@ def build_default_prompt(rag_text: str = "") -> str:
     return "\n\n".join(components)
 
 def get_persona_preset(keyword: str) -> str:
-    """Load a predefined character if it exists"""
+    """Load a predefined character if it exists by checking substrings"""
     keyword = keyword.lower()
     presets = {
         "girlfriend": load_prompt("personas/girlfriend.txt"),
         "pirate": load_prompt("personas/pirate.txt")
     }
-    return presets.get(keyword, None)
+    for key, prompt_text in presets.items():
+        if key in keyword:
+            return prompt_text
+    return None
 

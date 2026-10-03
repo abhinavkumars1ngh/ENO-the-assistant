@@ -1,16 +1,17 @@
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
+from backend.core import config
 from backend.core.database import get_db
-from backend.core.auth import get_current_user, create_access_token
+from backend.core.auth import get_current_user, create_access_token, default_token_for, verify_google_id_token
+from backend.core.plans import PLANS, effective_plan
+from backend.core.usage import record_usage
 from passlib.context import CryptContext
-from backend.models.schema import Conversation, Message, Memory, User
-from backend.services.ingestion import process_pdf_task, process_video_task, process_image_task
-from backend.services.voice_service import voice_service
+from backend.models.schema import Memory, User
 from pydantic import BaseModel
 import shutil
 import os
-import uuid
+import time
 import datetime
 import tempfile
 import subprocess
@@ -20,38 +21,53 @@ router = APIRouter()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 class GoogleAuthSync(BaseModel):
-    email: str
+    # Google-signed ID token from the NextAuth sign-in. The backend verifies it itself instead
+    # of trusting a bare email address from the caller.
+    id_token: str
+
+def _session_payload(user: User) -> dict:
+    return {
+        "access_token": default_token_for(user),
+        "token_type": "bearer",
+        "user_id": user.id,
+        "uid": user.public_id,
+        "role": user.role,
+        "plan": effective_plan(user),
+    }
 
 @router.post("/login")
 def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == form_data.username).first()
     if not user or not user.hashed_password:
         raise HTTPException(status_code=401, detail="Incorrect username or password")
-        
+
     try:
         # Check password
         if not bcrypt.checkpw(form_data.password.encode('utf-8'), user.hashed_password.encode('utf-8')):
             raise HTTPException(status_code=401, detail="Incorrect username or password")
+    except HTTPException:
+        raise
     except Exception:
         # Fallback if the hash isn't pure bcrypt format
         if not pwd_context.verify(form_data.password, user.hashed_password):
             raise HTTPException(status_code=401, detail="Incorrect username or password")
-            
-    access_token = create_access_token(data={"sub": str(user.id)})
-    return {"access_token": access_token, "token_type": "bearer", "user_id": user.id, "role": user.role}
+
+    return _session_payload(user)
 
 @router.post("/auth/sync")
 def sync_oauth_user(data: GoogleAuthSync, db: Session = Depends(get_db)):
-    """Syncs a Google OAuth user from NextAuth to the FastAPI database and returns a JWT."""
-    user = db.query(User).filter(User.email == data.email).first()
+    """Verifies a Google ID token, creates the account row on first sign-in, and returns a JWT."""
+    claims = verify_google_id_token(data.id_token)
+    email = claims["email"].lower()
+
+    user = db.query(User).filter(User.email == email).first()
     if not user:
-        user = User(email=data.email, role="user")
+        user = User(email=email, role="user", plan="free")
         db.add(user)
         db.commit()
         db.refresh(user)
-        
-    access_token = create_access_token(data={"sub": str(user.id)})
-    return {"access_token": access_token, "token_type": "bearer", "user_id": user.id, "role": user.role}
+
+    return _session_payload(user)
 
 
 def _convert_webm_to_wav(webm_path: str) -> str:
@@ -68,14 +84,46 @@ def _convert_webm_to_wav(webm_path: str) -> str:
         return webm_path
 
 
+def _transcribe_hosted(audio_path: str, content_type: str) -> str:
+    """Hosted Whisper via an OpenAI-compatible /audio/transcriptions endpoint (cloud mode)."""
+    import httpx
+    headers = {"Authorization": f"Bearer {config.LLM_API_KEY}"} if config.LLM_API_KEY else {}
+    with open(audio_path, "rb") as fh:
+        resp = httpx.post(
+            f"{config.LLM_BASE_URL}/audio/transcriptions",
+            headers=headers,
+            data={"model": config.STT_MODEL},
+            files={"file": (os.path.basename(audio_path), fh, content_type or "audio/webm")},
+            timeout=60.0,
+        )
+    if resp.status_code != 200:
+        print(f"STT endpoint returned HTTP {resp.status_code}")
+        return ""
+    return resp.json().get("text", "")
+
+
 @router.post("/transcribe")
-async def transcribe_audio(file: UploadFile = File(...)):
+async def transcribe_audio(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
     Accepts an audio file upload (webm/wav), transcribes it with Whisper,
     and returns the text. This is the reliable alternative to WebSocket audio.
+    Voice is a Plus/Pro feature.
     """
+    plan = effective_plan(current_user)
+    if not PLANS[plan]["voice"]:
+        raise HTTPException(status_code=402, detail="Voice chat is available on the Plus plan and above.")
+
+    hosted = bool(config.STT_MODEL and config.LLM_BASE_URL)
+    if config.IS_CLOUD and not hosted:
+        raise HTTPException(status_code=503, detail="Voice transcription is not enabled on this server.")
+
     temp_webm = None
     temp_wav = None
+    started = time.monotonic()
     try:
         # Write the uploaded audio to a temp file
         suffix = ".webm" if "webm" in (file.content_type or "") else ".wav"
@@ -84,14 +132,21 @@ async def transcribe_audio(file: UploadFile = File(...)):
             f.write(content)
             temp_webm = f.name
 
-        # Convert to wav if needed
-        if suffix == ".webm":
-            temp_wav = _convert_webm_to_wav(temp_webm)
-        else:
+        if hosted:
             temp_wav = temp_webm
+            text = _transcribe_hosted(temp_webm, file.content_type)
+        else:
+            # Convert to wav if needed
+            if suffix == ".webm":
+                temp_wav = _convert_webm_to_wav(temp_webm)
+            else:
+                temp_wav = temp_webm
 
-        # Transcribe
-        text = voice_service.transcribe_audio(temp_wav)
+            # Transcribe
+            from backend.services.voice_service import voice_service
+            text = voice_service.transcribe_audio(temp_wav)
+
+        record_usage(db, current_user.id, kind="transcribe", duration_ms=int((time.monotonic() - started) * 1000))
 
         if not text or not text.strip():
             return {"text": "", "error": "Could not detect speech. Please try again."}
@@ -99,8 +154,8 @@ async def transcribe_audio(file: UploadFile = File(...)):
         return {"text": text.strip()}
 
     except Exception as e:
-        print(f"Transcription error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Transcription error: {type(e).__name__}")
+        raise HTTPException(status_code=500, detail="Transcription failed")
     finally:
         for f in [temp_webm, temp_wav]:
             if f and os.path.exists(f):
@@ -110,24 +165,41 @@ async def transcribe_audio(file: UploadFile = File(...)):
                     pass
 
 
-@router.post("/ingest/pdf")
-async def upload_pdf(course: str = Form(...), title: str = Form(...), file: UploadFile = File(...)):
-    # Save file temporarily
-    file_path = f"/Users/abhinavkumarsingh/ENO/storage/documents/{file.filename}"
+# --- Knowledge-base ingestion (local stack only: Qdrant + Celery + local embedding models) ---
+
+def _require_local_stack():
+    if not config.LOCAL_STACK_ENABLED:
+        raise HTTPException(
+            status_code=501,
+            detail="Document upload needs the local ENO stack and is not part of the cloud demo.",
+        )
+
+def _save_upload(file: UploadFile) -> str:
+    docs_dir = config.STORAGE_DIR / "documents"
+    os.makedirs(docs_dir, exist_ok=True)
+    # basename() blocks path traversal via crafted filenames
+    file_path = str(docs_dir / os.path.basename(file.filename or "upload"))
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
-    
+    return file_path
+
+@router.post("/ingest/pdf")
+async def upload_pdf(course: str = Form(...), title: str = Form(...), file: UploadFile = File(...), current_user: User = Depends(get_current_user)):
+    _require_local_stack()
+    from backend.services.ingestion import process_pdf_task
+    file_path = _save_upload(file)
+
     # Trigger celery background task
     process_pdf_task.delay(file_path, course, title)
-    
+
     return {"message": "PDF ingestion started", "filename": file.filename}
 
 @router.post("/ingest/chat_file")
-async def upload_chat_file(chat_id: str = Form(...), file: UploadFile = File(...)):
-    file_path = f"/Users/abhinavkumarsingh/ENO/storage/documents/{file.filename}"
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-    
+async def upload_chat_file(chat_id: str = Form(...), file: UploadFile = File(...), current_user: User = Depends(get_current_user)):
+    _require_local_stack()
+    from backend.services.ingestion import process_pdf_task, process_image_task
+    file_path = _save_upload(file)
+
     ext = file.filename.lower().split('.')[-1]
     extracted_text = ""
     if ext in ['pdf']:
@@ -136,59 +208,18 @@ async def upload_chat_file(chat_id: str = Form(...), file: UploadFile = File(...
         extracted_text = process_image_task(file_path, chat_id=chat_id)
     else:
         return {"error": "Unsupported file format"}
-        
+
     return {"message": "Chat file ingestion started", "filename": file.filename, "extracted_text": extracted_text}
 
 @router.post("/ingest/video")
-async def ingest_video(course: str = Form(...), video_url: str = Form(...)):
+async def ingest_video(course: str = Form(...), video_url: str = Form(...), current_user: User = Depends(get_current_user)):
+    _require_local_stack()
+    from backend.services.ingestion import process_video_task
     process_video_task.delay(video_url, course)
     return {"message": "Video ingestion started", "url": video_url}
 
-# --- Chat Management Endpoints ---
-
-@router.get("/chats")
-def get_chats(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Fetch all conversations for the logged in user, ordered by most recently updated."""
-    chats = db.query(Conversation).filter(Conversation.user_id == current_user.id).order_by(Conversation.updated.desc()).all()
-    return {"chats": [{"id": c.id, "title": c.title, "updated": c.updated} for c in chats]}
-
-@router.post("/chats")
-def create_chat(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Create a new conversation."""
-    chat_id = str(uuid.uuid4())
-    new_chat = Conversation(
-        id=chat_id,
-        user_id=current_user.id,
-        title="New Chat",
-        created=datetime.datetime.utcnow(),
-        updated=datetime.datetime.utcnow()
-    )
-    db.add(new_chat)
-    db.commit()
-    return {"id": chat_id, "title": "New Chat"}
-
-@router.get("/chats/{chat_id}/messages")
-def get_chat_messages(chat_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Fetch all messages for a specific conversation, ensuring ownership."""
-    # Verify ownership
-    chat = db.query(Conversation).filter(Conversation.id == chat_id, Conversation.user_id == current_user.id).first()
-    if not chat:
-        raise HTTPException(status_code=404, detail="Chat not found")
-        
-    messages = db.query(Message).filter(Message.conversation_id == chat_id).order_by(Message.timestamp.asc()).all()
-    return {"messages": [{"role": m.role, "content": m.content, "timestamp": m.timestamp} for m in messages]}
-
-@router.delete("/chats/{chat_id}")
-def delete_chat(chat_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Delete a conversation and its messages."""
-    chat = db.query(Conversation).filter(Conversation.id == chat_id, Conversation.user_id == current_user.id).first()
-    if not chat:
-        raise HTTPException(status_code=404, detail="Chat not found")
-        
-    db.query(Message).filter(Message.conversation_id == chat_id).delete()
-    db.delete(chat)
-    db.commit()
-    return {"status": "ok"}
+# NOTE: The /chats endpoints were removed on purpose. Conversations are stored on the user's
+# device (IndexedDB vault), not in a server-side chat table.
 
 # --- Memory Endpoints ---
 

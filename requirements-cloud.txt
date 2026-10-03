@@ -1,0 +1,15 @@
+# Lightweight dependency set for the cloud container (Linux, no GPU, no Apple Silicon).
+# The full local stack (MLX, Qdrant, Celery, sentence-transformers, Whisper) stays in
+# requirements.txt and is NOT needed here: cloud mode calls a hosted OpenAI-compatible model endpoint.
+fastapi>=0.111
+uvicorn[standard]>=0.30
+sqlalchemy>=2.0.30
+psycopg2-binary>=2.9
+httpx>=0.27
+pydantic>=2.7
+python-multipart>=0.0.9
+python-jose[cryptography]>=3.3
+passlib>=1.7.4
+bcrypt>=4.0
+google-auth>=2.29
+requests>=2.31

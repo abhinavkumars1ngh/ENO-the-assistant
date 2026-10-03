@@ -1,4 +1,6 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Text, JSON
+import uuid
+
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Text, JSON, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -14,8 +16,47 @@ class User(Base):
     role = Column(String, default="user") # 'admin' or 'user'
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    # Account / tier info (device independent). 'free' | 'plus' | 'pro'
+    plan = Column(String, default="free", nullable=False, server_default="free")
+    plan_updated_at = Column(DateTime(timezone=True), nullable=True)
+    # Stable, opaque, non-guessable ID. The browser uses it to namespace the
+    # on-device chat vault, so two accounts on one browser never share data and
+    # a reset DB can never re-issue an ID that points at someone else's vault.
+    public_id = Column(String, unique=True, index=True, nullable=True, default=lambda: uuid.uuid4().hex)
+
     # Relationship to conversations
+    # NOTE: Chats now live on the user's device (IndexedDB). The conversations/messages
+    # tables below are legacy and are no longer written to.
     conversations = relationship("Conversation", back_populates="user")
+
+
+class UsageEvent(Base):
+    """Usage METADATA only (who/when/which model/how much). Never message bodies."""
+    __tablename__ = "usage_events"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    kind = Column(String, default="chat")  # chat | transcribe
+    model = Column(String, nullable=True)
+    output_chars = Column(Integer, default=0)
+    duration_ms = Column(Integer, default=0)
+
+    __table_args__ = (Index("ix_usage_user_created", "user_id", "created_at"),)
+
+
+class Payment(Base):
+    """One row per Razorpay order. Used to verify checkout belongs to the right user and plan."""
+    __tablename__ = "payments"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    plan = Column(String, nullable=False)
+    amount_paise = Column(Integer, nullable=False)
+    currency = Column(String, default="INR")
+    razorpay_order_id = Column(String, unique=True, index=True, nullable=False)
+    razorpay_payment_id = Column(String, nullable=True)
+    status = Column(String, default="created")  # created | paid | failed
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    paid_at = Column(DateTime(timezone=True), nullable=True)
 
 class Document(Base):
     __tablename__ = "documents"

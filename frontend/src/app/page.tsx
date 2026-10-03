@@ -3,7 +3,7 @@
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Mic, Send, Bot, Sparkles, Copy, Check, Square, Trash2, Plus, MessageSquare, BookOpen, Brain, Settings, X, Headphones, Paperclip, LogOut, User, Shield, MoreHorizontal } from "lucide-react";
+import { Mic, Send, Bot, Sparkles, Copy, Check, Square, Trash2, Plus, MessageSquare, BookOpen, Brain, Settings, X, Headphones, Paperclip, LogOut, User, Shield, MoreHorizontal, Lock, Crown, Menu, Smartphone, HardDrive } from "lucide-react";
 import { signOut, signIn } from "next-auth/react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -13,6 +13,10 @@ import "katex/dist/katex.min.css";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import TextareaAutosize from "react-textarea-autosize";
+import { API_URL, WS_URL, getHeaders, fetchAccount, type Account } from "@/lib/api";
+import { listChats, getChat, saveChat, deleteChat as deleteVaultChat, requestPersistentStorage, type ChatSummary, type VaultMessage } from "@/lib/vaultDb";
+import PlanCards from "@/components/PlanCards";
+import VaultPanel from "@/components/VaultPanel";
 
 interface Message {
   role: "user" | "eno" | "assistant";
@@ -20,14 +24,26 @@ interface Message {
   content?: string; // from API
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
-const getHeaders = (token: string) => ({ "ngrok-skip-browser-warning": "true", ...(token ? { Authorization: `Bearer ${token}` } : {}) });
+// Max prior messages sent with each turn (server accepts 20 total). Chats live on this device, so the
+// server is stateless and the client supplies the context window.
+const HISTORY_LIMIT = 19;
 
-interface ChatSession {
-  id: string;
-  title: string;
-  updated: string;
+function buildHistory(msgs: Message[]): { role: "user" | "assistant"; content: string }[] {
+  const items = msgs
+    .filter((m) => m.text && !m.text.startsWith("[System]"))
+    .map((m) => ({ role: (m.role === "user" ? "user" : "assistant") as "user" | "assistant", content: m.text as string }));
+  const recent = items.slice(-HISTORY_LIMIT);
+  // If the active @become persona was set earlier than the window, carry it along so it doesn't silently reset.
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    if (it.role !== "user") continue;
+    if (it.content.startsWith("@/become")) break;
+    if (it.content.startsWith("@become ")) {
+      if (i < items.length - HISTORY_LIMIT) recent.unshift(it);
+      break;
+    }
+  }
+  return recent;
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -93,11 +109,11 @@ function MarkdownRenderer({ content }: { content: string }) {
 }
 
 // Modal Component
-function Modal({ title, isOpen, onClose, children }: { title: string, isOpen: boolean, onClose: () => void, children: React.ReactNode }) {
+function Modal({ title, isOpen, onClose, children, wide }: { title: string, isOpen: boolean, onClose: () => void, children: React.ReactNode, wide?: boolean }) {
   if (!isOpen) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
+      <div className={`bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl w-full ${wide ? "max-w-4xl" : "max-w-lg"} overflow-hidden`}>
         <div className="flex items-center justify-between p-4 border-b border-white/5 bg-zinc-950/50">
           <h2 className="text-lg font-medium text-white">{title}</h2>
           <button onClick={onClose} className="p-2 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white transition-colors">
@@ -209,8 +225,9 @@ export default function Home() {
   };
 
   const apiToken = session?.apiToken || "";
+  const uid = session?.user?.uid || "";
 
-  const [chats, setChats] = useState<ChatSession[]>([]);
+  const [chats, setChats] = useState<ChatSummary[]>([]);
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [activeModel, setActiveModel] = useState<"standard" | "bro">("standard");
@@ -219,12 +236,17 @@ export default function Home() {
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [isGenerating, setIsGeneratingState] = useState(false);
   const [aiMood, setAiMood] = useState<string>("Neutral");
   const [aiName, setAiName] = useState<string>("ENO");
+
+  const [account, setAccount] = useState<Account | null>(null);
+  const [upgradePrompt, setUpgradePrompt] = useState<{ message: string; required_plan?: "plus" | "pro" } | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [installEvent, setInstallEvent] = useState<any>(null);
   
   // Modals
-  const [activeModal, setActiveModal] = useState<"courses" | "memory" | "settings" | null>(null);
+  const [activeModal, setActiveModal] = useState<"courses" | "memory" | "settings" | "vault" | "plans" | null>(null);
   const [isVoiceModeOpen, setIsVoiceModeOpen] = useState(false);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const getActivePersonaName = () => {
@@ -243,44 +265,82 @@ export default function Home() {
     return "ENO";
   };
 
-  const [personaMemory, setPersonaMemory] = useState<string[]>([]);
-  
   const wsRef = useRef<WebSocket | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const lastSpokenIndexRef = useRef<number>(-1);
 
-  const fetchChats = async () => {
-    try {
-      const res = await fetch(`${API_URL}/api/chats`, { headers: getHeaders(apiToken) });
-      if (res.ok) {
-        const data = await res.json();
-        setChats(data.chats);
-        if (data.chats.length > 0 && !currentChatId) {
-          setCurrentChatId(data.chats[0].id);
-        } else if (data.chats.length === 0) {
-          createNewChat();
-        }
-      }
-    } catch (e) {
-      console.error("Failed to fetch chats", e);
-    }
+  // Refs are the source of truth for things async callbacks (websocket, recorder) need to read
+  // *right now*, without waiting for a React render.
+  const messagesRef = useRef<Message[]>([]);
+  const currentChatIdRef = useRef<string | null>(null);
+  const isGeneratingRef = useRef(false);
+  const uidRef = useRef("");
+
+  const setIsGenerating = (v: boolean) => {
+    isGeneratingRef.current = v;
+    setIsGeneratingState(v);
   };
 
-  // Fetch initial chats
-  useEffect(() => {
-    if (apiToken) {
-      fetchChats();
-    }
+  const applyMessages = (updater: (prev: Message[]) => Message[]) => {
+    const next = updater(messagesRef.current);
+    messagesRef.current = next;
+    setMessages(next);
+  };
+
+  const refreshChats = useCallback(async () => {
+    if (!uidRef.current) return [];
+    const list = await listChats(uidRef.current);
+    setChats(list);
+    return list;
+  }, []);
+
+  const refreshAccount = useCallback(async () => {
+    if (!apiToken) return;
+    const a = await fetchAccount(apiToken);
+    if (a) setAccount(a);
   }, [apiToken]);
 
-  async function createNewChat() {
+  /** Write a chat to the on-device vault. Never sent to the server. */
+  const persistChat = useCallback(async (chatId: string, msgs: Message[]) => {
+    const u = uidRef.current;
+    if (!u || !chatId) return;
+    const clean = msgs.filter((m) => (m.text || "").length > 0 && !(m.text || "").startsWith("[System]"));
     try {
-      const res = await fetch(`${API_URL}/api/chats`, { method: "POST", headers: getHeaders(apiToken) });
-      const data = await res.json();
-      setChats([data, ...chats]);
-      setCurrentChatId(data.id);
+      const existing = await getChat(u, chatId);
+      const now = Date.now();
+      const out: VaultMessage[] = clean.map((m, i) => {
+        const role = m.role === "user" ? "user" : "assistant";
+        const content = m.text || "";
+        const old = existing?.messages[i];
+        return { role, content, ts: old && old.role === role && old.content === content ? old.ts : now };
+      });
+      let title = existing?.title ?? "New Chat";
+      if (title === "New Chat") {
+        const first = out.find((m) => m.role === "user");
+        if (first) title = first.content.slice(0, 30) + (first.content.length > 30 ? "..." : "");
+      }
+      await saveChat({ uid: u, id: chatId, title, created: existing?.created ?? now, updated: now, messages: out });
+      refreshChats();
+    } catch (e) {
+      console.error("Failed to save chat to the vault", e);
+    }
+  }, [refreshChats]);
+
+  async function createNewChat() {
+    const u = uidRef.current;
+    if (!u) return;
+    // Don't pile up empty chats: if the open one is still empty, just reuse it.
+    if (currentChatIdRef.current && messagesRef.current.length === 0) return;
+    const id = crypto.randomUUID();
+    const now = Date.now();
+    try {
+      await saveChat({ uid: u, id, title: "New Chat", created: now, updated: now, messages: [] });
+      messagesRef.current = [];
+      setMessages([]);
+      setCurrentChatId(id);
+      await refreshChats();
     } catch (e) {
       console.error("Failed to create chat", e);
     }
@@ -289,66 +349,95 @@ export default function Home() {
   const deleteChat = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      await fetch(`${API_URL}/api/chats/${id}`, { method: "DELETE", headers: getHeaders(apiToken) });
-      const remaining = chats.filter(c => c.id !== id);
-      setChats(remaining);
+      await deleteVaultChat(uidRef.current, id);
+      const remaining = await refreshChats();
       if (currentChatId === id) {
         if (remaining.length > 0) setCurrentChatId(remaining[0].id);
-        else createNewChat();
+        else {
+          currentChatIdRef.current = null;
+          setCurrentChatId(null);
+          await createNewChat();
+        }
       }
     } catch (err) {
       console.error("Failed to delete chat", err);
     }
   };
 
-  const fetchMemory = async () => {
-    try {
-      const res = await fetch(`${API_URL}/api/memory`, { headers: getHeaders(apiToken) });
-      const data = await res.json();
-      setPersonaMemory(data.persona);
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  // Switch chats
+  // Load this account's chats from the on-device vault
   useEffect(() => {
-    if (!currentChatId) return;
-    
-    // 1. Fetch messages
-    const loadMessages = async () => {
+    uidRef.current = uid;
+    if (!uid) return;
+    let cancelled = false;
+    (async () => {
+      requestPersistentStorage();
       try {
-        const res = await fetch(`${API_URL}/api/chats/${currentChatId}/messages`, { headers: getHeaders(apiToken) });
-        const data = await res.json();
-        // API returns { role, content }, map to our state format
-        setMessages(data.messages.map((m: { role: string; content: string }) => ({ role: m.role === "assistant" ? "eno" : "user", text: m.content })));
+        const list = await listChats(uid);
+        if (cancelled) return;
+        setChats(list);
+        if (list.length > 0) setCurrentChatId(list[0].id);
+        else await createNewChat();
       } catch (e) {
-        console.error("Failed to fetch messages", e);
+        console.error("Could not open the on-device vault", e);
       }
-    };
-    loadMessages();
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uid]);
 
-    // 2. Connect WebSocket with Auto-Reconnect
+  // Plan / usage info
+  useEffect(() => {
+    refreshAccount();
+  }, [refreshAccount]);
+
+  // PWA install prompt (Chrome/Android). iOS has no prompt; the Vault/Settings copy explains Add to Home Screen.
+  useEffect(() => {
+    const onPrompt = (e: Event) => { e.preventDefault(); setInstallEvent(e); };
+    window.addEventListener("beforeinstallprompt", onPrompt);
+    return () => window.removeEventListener("beforeinstallprompt", onPrompt);
+  }, []);
+
+  // Switch chats: load messages from the vault
+  useEffect(() => {
+    currentChatIdRef.current = currentChatId;
+    if (!currentChatId || !uid) return;
+    let cancelled = false;
+    getChat(uid, currentChatId).then((chat) => {
+      if (cancelled) return;
+      const msgs: Message[] = (chat?.messages ?? []).map((m) => ({ role: m.role === "assistant" ? "eno" : "user", text: m.content }));
+      messagesRef.current = msgs;
+      setMessages(msgs);
+    });
+    return () => { cancelled = true; };
+  }, [currentChatId, uid]);
+
+  // Connect WebSocket with Auto-Reconnect
+  useEffect(() => {
+    if (!currentChatId || !apiToken) return;
+    const chatId = currentChatId;
+
     let ws: WebSocket;
     let reconnectTimer: NodeJS.Timeout;
     let isUnmounted = false;
 
     const connect = () => {
-      if (isUnmounted || !currentChatId) return;
+      if (isUnmounted) return;
       if (wsRef.current) wsRef.current.close();
       
-      ws = new WebSocket(`${WS_URL}/ws/chat/${currentChatId}?token=${apiToken}`);
+      ws = new WebSocket(`${WS_URL}/ws/chat/${chatId}?token=${apiToken}`);
       ws.onopen = () => {
         setIsConnected(true);
         console.log("WebSocket connected.");
       };
       ws.onclose = () => {
         setIsConnected(false);
-        setIsGenerating(false);
         if (!isUnmounted) {
+          // Connection dropped mid-answer: keep what we received.
+          if (isGeneratingRef.current) persistChat(chatId, messagesRef.current);
           console.log("WebSocket disconnected. Reconnecting in 3 seconds...");
           reconnectTimer = setTimeout(connect, 3000);
         }
+        setIsGenerating(false);
       };
       ws.onerror = () => {
         setIsGenerating(false);
@@ -356,7 +445,7 @@ export default function Home() {
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
         if (data.type === "token") {
-          setMessages((prev) => {
+          applyMessages((prev) => {
             const lastMsg = prev[prev.length - 1];
             if (lastMsg && lastMsg.role === "eno") {
               return [...prev.slice(0, -1), { role: "eno", text: (lastMsg.text || "") + data.content }];
@@ -366,9 +455,18 @@ export default function Home() {
           });
         } else if (data.type === "done") {
           setIsGenerating(false);
-          fetchChats(); // Refresh titles
+          persistChat(chatId, messagesRef.current);
+          refreshAccount(); // usage counter
+        } else if (data.type === "error") {
+          // Plan gate / daily limit: hand the user's text back and show the upgrade prompt.
+          const last = messagesRef.current[messagesRef.current.length - 1];
+          if (last?.role === "user") {
+            setInput(last.text || "");
+            applyMessages((prev) => prev.slice(0, -1));
+          }
+          setUpgradePrompt({ message: data.message, required_plan: data.required_plan });
         } else if (data.type === "stt_result") {
-          setMessages((prev) => [...prev, { role: "user", text: data.content }]);
+          applyMessages((prev) => [...prev, { role: "user", text: data.content }]);
         } else if (data.type === "mood") {
           setAiMood(data.content);
           if (data.name) setAiName(data.name);
@@ -382,9 +480,11 @@ export default function Home() {
     return () => {
       isUnmounted = true;
       clearTimeout(reconnectTimer);
+      if (isGeneratingRef.current) persistChat(chatId, messagesRef.current);
       if (wsRef.current) wsRef.current.close();
     };
-  }, [currentChatId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentChatId, apiToken]);
 
   // Auto-scroll
   useEffect(() => {
@@ -462,7 +562,7 @@ export default function Home() {
     
     if (pendingFiles.length > 0) {
       setIsUploadingChatFile(true);
-      setMessages((prev) => [...prev, { role: "assistant", text: `[System] Processing ${pendingFiles.length} file(s)...` }]);
+      applyMessages((prev) => [...prev, { role: "assistant", text: `[System] Processing ${pendingFiles.length} file(s)...` }]);
       
       for (const file of pendingFiles) {
         const formData = new FormData();
@@ -486,7 +586,7 @@ export default function Home() {
       }
       
       // Remove system message
-      setMessages((prev) => prev.slice(0, -1));
+      applyMessages((prev) => prev.slice(0, -1));
       
       if (!input.trim()) {
         currentInput = `[User attached ${pendingFiles.length} file(s)]\n` + currentInput;
@@ -496,12 +596,28 @@ export default function Home() {
       setIsUploadingChatFile(false);
     }
 
-    wsRef.current.send(JSON.stringify({ type: "text", content: currentInput, model: activeModel }));
-    setMessages((prev) => [...prev, { role: "user", text: currentInput }]);
+    const history = buildHistory(messagesRef.current);
+    wsRef.current.send(JSON.stringify({ type: "text", content: currentInput, model: activeModel, history }));
+    applyMessages((prev) => [...prev, { role: "user", text: currentInput }]);
+    if (currentChatId) persistChat(currentChatId, messagesRef.current);
     setInput("");
   };
 
+  /** Voice needs server support AND a plan that includes it. Returns true if the user may proceed. */
+  const guardVoice = () => {
+    if (account && !account.capabilities.voice_transcription) {
+      alert("Voice transcription isn't enabled on this server.");
+      return false;
+    }
+    if (account && !account.voice) {
+      setUpgradePrompt({ message: "Voice chat is available on the Plus plan and above.", required_plan: "plus" });
+      return false;
+    }
+    return true;
+  };
+
   const startRecording = async () => {
+    if (!guardVoice()) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
@@ -518,7 +634,7 @@ export default function Home() {
         // POST the audio blob directly to /api/transcribe (more reliable than WebSocket binary)
         try {
           setIsGenerating(true);
-          setMessages((prev) => [...prev, { role: "user", text: "🎤 *Transcribing audio...*" }]);
+          applyMessages((prev) => [...prev, { role: "user", text: "🎤 *Transcribing audio...*" }]);
 
           const formData = new FormData();
           formData.append("file", audioBlob, "audio.webm");
@@ -529,12 +645,18 @@ export default function Home() {
             body: formData,
           });
 
+          if (res.status === 402) {
+            applyMessages((prev) => prev.slice(0, -1));
+            setIsGenerating(false);
+            setUpgradePrompt({ message: "Voice chat is available on the Plus plan and above.", required_plan: "plus" });
+            return;
+          }
           if (!res.ok) throw new Error(`Transcription failed: ${res.status}`);
           const data = await res.json();
           const transcribedText = data.text?.trim();
 
           if (!transcribedText) {
-            setMessages((prev) => [
+            applyMessages((prev) => [
               ...prev.slice(0, -1),
               { role: "eno", text: "I couldn't hear anything clearly. Could you try again?" },
             ]);
@@ -543,18 +665,20 @@ export default function Home() {
           }
 
           // Replace the placeholder with the actual transcription
-          setMessages((prev) => [...prev.slice(0, -1), { role: "user", text: transcribedText }]);
+          applyMessages((prev) => [...prev.slice(0, -1), { role: "user", text: transcribedText }]);
 
           // Send transcribed text over WebSocket as a normal text message
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify({ type: "text", content: transcribedText, model: activeModel }));
+            const history = buildHistory(messagesRef.current.slice(0, -1));
+            wsRef.current.send(JSON.stringify({ type: "text", content: transcribedText, model: activeModel, history }));
+            if (currentChatId) persistChat(currentChatId, messagesRef.current);
           } else {
-            setMessages((prev) => [...prev, { role: "eno", text: "Connection lost. Please refresh." }]);
+            applyMessages((prev) => [...prev, { role: "eno", text: "Connection lost. Please refresh." }]);
             setIsGenerating(false);
           }
         } catch (err) {
           console.error("Audio transcription error:", err);
-          setMessages((prev) => [...prev.slice(0, -1), { role: "eno", text: "Voice transcription failed. Please try typing instead." }]);
+          applyMessages((prev) => [...prev.slice(0, -1), { role: "eno", text: "Voice transcription failed. Please try typing instead." }]);
           setIsGenerating(false);
         }
       };
@@ -651,8 +775,11 @@ export default function Home() {
         </div>
       )}
     <div className="flex h-dvh bg-black overflow-hidden font-sans">
-      {/* Sidebar */}
-      <div className="w-64 border-r border-white/5 hidden md:flex flex-col z-10 bg-zinc-950/80 backdrop-blur-xl">
+      {/* Mobile drawer backdrop */}
+      {sidebarOpen && <div className="fixed inset-0 z-30 bg-black/60 md:hidden" onClick={() => setSidebarOpen(false)} />}
+
+      {/* Sidebar (drawer on phones, fixed column on desktop) */}
+      <div className={`${sidebarOpen ? "flex" : "hidden"} md:flex fixed md:static inset-y-0 left-0 z-40 md:z-10 w-72 md:w-64 border-r border-white/5 flex-col bg-zinc-950 md:bg-zinc-950/80 md:backdrop-blur-xl pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]`}>
         <div className="p-4 flex items-center gap-3">
           <div className="h-8 w-8 rounded-lg bg-indigo-500 flex items-center justify-center shadow-lg shadow-indigo-500/20">
             <Bot className="w-5 h-5 text-white" />
@@ -662,7 +789,7 @@ export default function Home() {
         
         <div className="px-3 pb-3">
           <button 
-            onClick={createNewChat}
+            onClick={() => { createNewChat(); setSidebarOpen(false); }}
             className="w-full flex items-center gap-2 justify-center px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-sm font-medium transition-colors ring-1 ring-white/5"
           >
             <Plus className="w-4 h-4" /> New Chat
@@ -675,7 +802,7 @@ export default function Home() {
           {chats.map(chat => (
             <div 
               key={chat.id}
-              onClick={() => setCurrentChatId(chat.id)}
+              onClick={() => { setCurrentChatId(chat.id); setSidebarOpen(false); }}
               className={`group flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-colors ${currentChatId === chat.id ? "bg-indigo-500/10 text-indigo-300" : "hover:bg-white/5 text-zinc-400 hover:text-white"}`}
             >
               <div className="flex items-center gap-2 truncate">
@@ -684,7 +811,7 @@ export default function Home() {
               </div>
               <button 
                 onClick={(e) => deleteChat(chat.id, e)}
-                className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-400 transition-all"
+                className="opacity-100 md:opacity-0 md:group-hover:opacity-100 p-1 hover:text-red-400 transition-all"
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
@@ -693,10 +820,15 @@ export default function Home() {
         </div>
 
         <nav className="p-3 border-t border-white/5 space-y-1">
-          <button onClick={() => setActiveModal("courses")} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white text-sm">
-            <BookOpen className="w-4 h-4" /> Courses (Knowledge Base)
+          <button onClick={() => { setActiveModal("vault"); setSidebarOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white text-sm">
+            <Lock className="w-4 h-4" /> Your Vault
           </button>
-          <button onClick={() => { fetchMemory(); setActiveModal("memory"); }} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white text-sm">
+          {(!account || account.capabilities.documents) && (
+            <button onClick={() => { setActiveModal("courses"); setSidebarOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white text-sm">
+              <BookOpen className="w-4 h-4" /> Courses (Knowledge Base)
+            </button>
+          )}
+          <button onClick={() => { setActiveModal("memory"); setSidebarOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white text-sm">
             <Brain className="w-4 h-4" /> Personalization Memory
           </button>
         </nav>
@@ -712,7 +844,9 @@ export default function Home() {
               </div>
               <div className="flex flex-col items-start">
                 <span className="text-sm font-medium text-zinc-200">{session?.user?.name || session?.user?.email?.split('@')[0] || "User"}</span>
-                <span className="text-xs text-zinc-500">{session?.user?.role === 'admin' ? 'Administrator' : 'Free Plan'}</span>
+                <span className="text-xs text-zinc-500">
+                  {session?.user?.role === 'admin' ? 'Administrator' : account ? `${account.plan_label} plan${account.daily_limit !== null ? ` · ${account.used_today}/${account.daily_limit} today` : ""}` : "..."}
+                </span>
               </div>
             </div>
             <MoreHorizontal className="w-4 h-4 text-zinc-500 group-hover:text-zinc-300" />
@@ -723,6 +857,14 @@ export default function Home() {
               {session?.user?.role === 'admin' && (
                 <button onClick={() => { setIsProfileMenuOpen(false); setActiveModal("settings"); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-white/10 text-zinc-200 text-sm transition-colors">
                   <Shield className="w-4 h-4 text-indigo-400" /> Admin Dashboard
+                </button>
+              )}
+              <button onClick={() => { setIsProfileMenuOpen(false); setActiveModal("plans"); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-white/10 text-zinc-200 text-sm transition-colors">
+                <Crown className="w-4 h-4 text-amber-400" /> Plans &amp; upgrade
+              </button>
+              {installEvent && (
+                <button onClick={async () => { setIsProfileMenuOpen(false); installEvent.prompt(); await installEvent.userChoice; setInstallEvent(null); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-white/10 text-zinc-200 text-sm transition-colors">
+                  <Smartphone className="w-4 h-4" /> Install app
                 </button>
               )}
               <button onClick={() => { setIsProfileMenuOpen(false); setActiveModal("settings"); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-white/10 text-zinc-200 text-sm transition-colors">
@@ -740,6 +882,23 @@ export default function Home() {
 
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col min-w-0 z-10">
+        {/* Mobile top bar */}
+        <div className="md:hidden flex items-center justify-between px-3 pb-2 pt-[max(0.5rem,env(safe-area-inset-top))] border-b border-white/5 bg-black/60 backdrop-blur-md">
+          <button onClick={() => setSidebarOpen(true)} className="p-2 rounded-lg text-zinc-300 hover:bg-white/5" aria-label="Open menu">
+            <Menu className="w-5 h-5" />
+          </button>
+          <div className="flex items-center gap-2 text-white font-semibold text-sm">
+            <Bot className="w-4 h-4 text-indigo-400" /> Eno AI
+          </div>
+          <button onClick={() => createNewChat()} className="p-2 rounded-lg text-zinc-300 hover:bg-white/5" aria-label="New chat">
+            <Plus className="w-5 h-5" />
+          </button>
+        </div>
+        {session?.syncError && (
+          <div className="px-4 py-2 text-xs text-center bg-red-500/10 text-red-300 border-b border-red-500/20">
+            Signed in, but the ENO server couldn&apos;t be reached. Try signing out and back in.
+          </div>
+        )}
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
           <div className="max-w-3xl mx-auto px-4 py-6 flex flex-col gap-5">
             {messages.length === 0 ? (
@@ -749,6 +908,7 @@ export default function Home() {
                 </div>
                 <h2 className="text-xl font-medium text-white">How can I help?</h2>
                 <p className="text-zinc-500 text-sm mt-2">Start a new conversation with Eno.</p>
+                <p className="text-zinc-600 text-xs mt-4 flex items-center gap-1.5"><HardDrive className="w-3.5 h-3.5" /> Chats are saved on this device, not on our servers.</p>
               </div>
             ) : (
               messages.map((msg, idx) => (
@@ -781,7 +941,7 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="p-4 border-t border-white/5 bg-black/50 backdrop-blur-md">
+        <div className="p-4 pb-[max(1rem,env(safe-area-inset-bottom))] border-t border-white/5 bg-black/50 backdrop-blur-md">
           <div className="max-w-3xl mx-auto flex justify-center mb-3">
             <div className="bg-zinc-900/80 rounded-full p-1 flex gap-1 ring-1 ring-white/5">
               <button 
@@ -791,10 +951,17 @@ export default function Home() {
                 Standard (Gemma)
               </button>
               <button 
-                onClick={() => setActiveModel("bro")}
-                className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all ${activeModel === "bro" ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20" : "text-zinc-400 hover:text-white hover:bg-white/5"}`}
+                onClick={() => {
+                  if (account && !account.models.includes("bro")) {
+                    setUpgradePrompt({ message: "The bigger 'Bro' model is available on the Plus plan and above.", required_plan: "plus" });
+                    return;
+                  }
+                  setActiveModel("bro");
+                }}
+                className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all flex items-center gap-1.5 ${activeModel === "bro" ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20" : "text-zinc-400 hover:text-white hover:bg-white/5"}`}
               >
                 Bro (Qwen)
+                {account && !account.models.includes("bro") && <Lock className="w-3 h-3" />}
               </button>
             </div>
           </div>
@@ -816,19 +983,24 @@ export default function Home() {
               </div>
             )}
             <div className="flex gap-2 items-center w-full">
-              <input 
-                type="file" 
-                accept=".pdf,.png,.jpg,.jpeg,.webp,.heic" 
-                onChange={handleChatFileUpload}
-                className="hidden" 
-                id="chat-file-upload"
-                disabled={isUploadingChatFile || !isConnected}
-              />
-              <label htmlFor="chat-file-upload" className={`p-2.5 rounded-xl cursor-pointer transition-colors ${isUploadingChatFile ? "text-indigo-400 animate-pulse" : "text-zinc-400 hover:text-white"}`}>
-                <Paperclip className="w-5 h-5" />
-              </label>
-              <button onClick={isRecording ? stopRecording : startRecording} className={`p-2.5 rounded-xl transition-colors ${isRecording ? "bg-red-500 text-white animate-pulse" : "text-zinc-400 hover:text-white"}`}>
+              {(!account || account.capabilities.documents) && (
+                <>
+                  <input 
+                    type="file" 
+                    accept=".pdf,.png,.jpg,.jpeg,.webp,.heic" 
+                    onChange={handleChatFileUpload}
+                    className="hidden" 
+                    id="chat-file-upload"
+                    disabled={isUploadingChatFile || !isConnected}
+                  />
+                  <label htmlFor="chat-file-upload" className={`p-2.5 rounded-xl cursor-pointer transition-colors ${isUploadingChatFile ? "text-indigo-400 animate-pulse" : "text-zinc-400 hover:text-white"}`}>
+                    <Paperclip className="w-5 h-5" />
+                  </label>
+                </>
+              )}
+              <button onClick={isRecording ? stopRecording : startRecording} className={`relative p-2.5 rounded-xl transition-colors ${isRecording ? "bg-red-500 text-white animate-pulse" : "text-zinc-400 hover:text-white"}`}>
                 {isRecording ? <Square className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                {account && !account.voice && !isRecording && <Lock className="w-2.5 h-2.5 absolute top-1.5 right-1.5 text-amber-400" />}
               </button>
               <TextareaAutosize
                 className="flex-1 bg-transparent text-white px-2 py-2.5 focus:outline-none placeholder:text-zinc-600 resize-none"
@@ -850,7 +1022,7 @@ export default function Home() {
               </button>
             </div>
             <button 
-              onClick={() => setIsVoiceModeOpen(true)} 
+              onClick={() => { if (guardVoice()) setIsVoiceModeOpen(true); }} 
               disabled={isGenerating || !isConnected} 
               className="p-2.5 bg-zinc-800 hover:bg-indigo-500/20 text-indigo-400 rounded-xl transition-colors disabled:opacity-30 ml-1"
               title="Voice Chat Mode"
@@ -862,12 +1034,10 @@ export default function Home() {
       </div>
 
       {/* Modals */}
-      <Modal title="Your Memory Persona" isOpen={activeModal === "memory"} onClose={() => setActiveModal(null)}>
+      <Modal title="Personalization Memory" isOpen={activeModal === "memory"} onClose={() => setActiveModal(null)}>
         <div className="text-zinc-300 text-sm leading-relaxed space-y-4">
-          <p>Eno continually analyzes your conversation history to adapt to your texting style, tone, and preferences. Here is what Eno currently knows about you:</p>
-          <div className="p-4 bg-zinc-950 rounded-xl border border-white/5 font-mono text-xs text-indigo-300 whitespace-pre-wrap">
-            {personaMemory.length > 0 ? personaMemory[0] : "No memory profile built yet. Keep chatting with Eno so it can learn your style!"}
-          </div>
+          <p>Personalization is <b>paused</b>. ENO no longer keeps your conversations on its servers, so it has nothing to learn your style from.</p>
+          <p className="text-zinc-500 text-xs">On-device personalization (learned from your own vault, never uploaded) is on the roadmap.</p>
         </div>
       </Modal>
 
@@ -880,19 +1050,62 @@ export default function Home() {
       <Modal title="Settings" isOpen={activeModal === "settings"} onClose={() => setActiveModal(null)}>
         <div className="space-y-4 text-sm text-zinc-300">
           <div className="flex justify-between items-center py-2 border-b border-white/5">
-            <span>LLM Model</span>
-            <span className="px-2 py-1 bg-indigo-500/20 text-indigo-300 rounded">Qwen 2.5 (Local)</span>
+            <span>Inference</span>
+            <span className="px-2 py-1 bg-indigo-500/20 text-indigo-300 rounded">{account?.capabilities.mode === "cloud" ? "Hosted open-weights model" : "Local (Apple MLX)"}</span>
           </div>
           <div className="flex justify-between items-center py-2 border-b border-white/5">
-            <span>Voice Transcription</span>
-            <span className="px-2 py-1 bg-indigo-500/20 text-indigo-300 rounded">Whisper (Local)</span>
+            <span>Chat storage</span>
+            <span className="px-2 py-1 bg-indigo-500/20 text-indigo-300 rounded">On this device</span>
           </div>
-          <div className="flex justify-between items-center py-2">
+          <div className="flex justify-between items-center py-2 border-b border-white/5">
+            <span>Plan</span>
+            <span className="px-2 py-1 bg-indigo-500/20 text-indigo-300 rounded">{account?.plan_label ?? "..."}</span>
+          </div>
+          <div className="flex justify-between items-center py-2 border-b border-white/5">
             <span>Connection Status</span>
             <span className={`px-2 py-1 rounded ${isConnected ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"}`}>
               {isConnected ? "Online" : "Offline"}
             </span>
           </div>
+          <p className="text-xs text-zinc-500 leading-relaxed pt-1">
+            <b className="text-zinc-400">Install on your phone:</b> iPhone: Share &rarr; Add to Home Screen. Android: menu &rarr; Install app. Installing also stops
+            iOS from clearing your on-device chats after a week of inactivity.
+          </p>
+        </div>
+      </Modal>
+
+      <Modal title="Your Vault" isOpen={activeModal === "vault"} onClose={() => setActiveModal(null)}>
+        {uid ? (
+          <VaultPanel
+            uid={uid}
+            onChanged={async () => {
+              const list = await refreshChats();
+              if (list.length === 0) {
+                currentChatIdRef.current = null;
+                setCurrentChatId(null);
+                await createNewChat();
+              } else if (!currentChatIdRef.current || !list.some((c) => c.id === currentChatIdRef.current)) {
+                setCurrentChatId(list[0].id);
+              } else {
+                // current chat may have been replaced by a newer imported copy
+                const chat = await getChat(uid, currentChatIdRef.current);
+                const msgs: Message[] = (chat?.messages ?? []).map((m) => ({ role: m.role === "assistant" ? "eno" : "user", text: m.content }));
+                messagesRef.current = msgs;
+                setMessages(msgs);
+              }
+            }}
+          />
+        ) : (
+          <p className="text-sm text-zinc-500">Sign in to use your vault.</p>
+        )}
+      </Modal>
+
+      <Modal wide title="Plans" isOpen={activeModal === "plans" || upgradePrompt !== null} onClose={() => { setActiveModal(null); setUpgradePrompt(null); }}>
+        <div className="space-y-4">
+          {upgradePrompt && (
+            <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-4 py-3 text-sm text-indigo-100">{upgradePrompt.message}</div>
+          )}
+          <PlanCards token={apiToken} account={account} onAccountChange={setAccount} highlight={upgradePrompt?.required_plan} />
         </div>
       </Modal>
 
