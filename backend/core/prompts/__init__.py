@@ -22,7 +22,9 @@ def build_persona_prompt(persona_definition: str, rag_text: str = "") -> str:
         "ABSOLUTE RULES:",
         base,
         boundaries,
-        formatting
+        formatting,
+        "CORE OPERATING RULES:",
+        load_prompt("core_operating_rules.txt")
     ]
     
     if rag_text:
@@ -36,7 +38,9 @@ def build_default_prompt(rag_text: str = "") -> str:
     
     components = [
         base,
-        formatting
+        formatting,
+        "CORE OPERATING RULES:",
+        load_prompt("core_operating_rules.txt")
     ]
     
     if rag_text:
