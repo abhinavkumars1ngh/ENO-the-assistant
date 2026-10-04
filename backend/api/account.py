@@ -23,7 +23,7 @@ from backend.core import config
 from backend.core.auth import get_current_user, get_db
 from backend.core.plans import CURRENCY, PLANS, effective_plan, plan_rank, public_plans
 from backend.core.usage import account_snapshot
-from backend.models.schema import Payment, User
+from backend.models.schema import HostEndpoint, OrgMember, Payment, User
 
 router = APIRouter()
 
@@ -179,3 +179,170 @@ def reset_plan_for_demo(db: Session = Depends(get_db), current_user: User = Depe
     user.plan_updated_at = datetime.now(timezone.utc)
     db.commit()
     return {"status": "ok", **account_snapshot(db, user)}
+
+
+# ==============================================================================
+# Host Endpoint Registry (Companion Device & Org Auto-Discovery)
+# ==============================================================================
+
+class RegisterEndpointRequest(BaseModel):
+    endpoint_url: str
+    owner_type: str = "user"  # 'user' | 'org'
+    org_id: int | None = None
+
+
+class HeartbeatEndpointRequest(BaseModel):
+    owner_type: str = "user"
+    org_id: int | None = None
+
+
+@router.post("/register-endpoint")
+def register_endpoint(
+    req: RegisterEndpointRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Registers a host's public endpoint URL (e.g. Cloudflare tunnel) to its owner ID.
+    Security: An account can only register as itself or an org it belongs to.
+    """
+    url = req.endpoint_url.strip()
+    if not url.startswith("http://") and not url.startswith("https://"):
+        raise HTTPException(status_code=400, detail="Invalid endpoint URL: must start with http:// or https://")
+
+    if req.owner_type == "user":
+        target_owner_id = current_user.id
+    elif req.owner_type == "org":
+        if not req.org_id:
+            raise HTTPException(status_code=400, detail="org_id is required when owner_type is 'org'")
+        membership = db.query(OrgMember).filter(
+            OrgMember.org_id == req.org_id,
+            OrgMember.user_id == current_user.id
+        ).first()
+        if not membership:
+            raise HTTPException(status_code=403, detail="Forbidden: You are not a member of this organization")
+        target_owner_id = req.org_id
+    else:
+        raise HTTPException(status_code=400, detail="owner_type must be 'user' or 'org'")
+
+    now = datetime.now(timezone.utc)
+    endpoint = db.query(HostEndpoint).filter(
+        HostEndpoint.owner_id == target_owner_id,
+        HostEndpoint.owner_type == req.owner_type
+    ).first()
+
+    if endpoint:
+        endpoint.endpoint_url = url
+        endpoint.last_heartbeat = now
+    else:
+        endpoint = HostEndpoint(
+            owner_id=target_owner_id,
+            owner_type=req.owner_type,
+            endpoint_url=url,
+            last_heartbeat=now,
+        )
+        db.add(endpoint)
+
+    db.commit()
+    db.refresh(endpoint)
+    return {
+        "status": "registered",
+        "endpoint_url": endpoint.endpoint_url,
+        "owner_id": endpoint.owner_id,
+        "owner_type": endpoint.owner_type,
+        "last_heartbeat": endpoint.last_heartbeat.isoformat(),
+    }
+
+
+@router.patch("/register-endpoint")
+def heartbeat_endpoint(
+    req: HeartbeatEndpointRequest | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Refreshes the host heartbeat timestamp. Offline if no heartbeat in 90 seconds."""
+    owner_type = req.owner_type if req else "user"
+    org_id = req.org_id if req else None
+
+    if owner_type == "user":
+        target_owner_id = current_user.id
+    elif owner_type == "org":
+        if not org_id:
+            raise HTTPException(status_code=400, detail="org_id is required when owner_type is 'org'")
+        membership = db.query(OrgMember).filter(
+            OrgMember.org_id == org_id,
+            OrgMember.user_id == current_user.id
+        ).first()
+        if not membership:
+            raise HTTPException(status_code=403, detail="Forbidden: You are not a member of this organization")
+        target_owner_id = org_id
+    else:
+        raise HTTPException(status_code=400, detail="owner_type must be 'user' or 'org'")
+
+    now = datetime.now(timezone.utc)
+    endpoint = db.query(HostEndpoint).filter(
+        HostEndpoint.owner_id == target_owner_id,
+        HostEndpoint.owner_type == owner_type
+    ).first()
+
+    if not endpoint:
+        raise HTTPException(status_code=404, detail="No endpoint registered for this owner")
+
+    endpoint.last_heartbeat = now
+    db.commit()
+    return {"status": "alive", "last_heartbeat": now.isoformat()}
+
+
+@router.get("/my-endpoint")
+def get_my_endpoint(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Resolves the caller's own owner_id (or their org's) and returns the current endpoint_url,
+    or 'offline' if no heartbeat in 90 seconds.
+    """
+    now = datetime.now(timezone.utc)
+    HEARTBEAT_TIMEOUT_SECONDS = 90
+
+    # 1. Direct user host endpoint
+    endpoint = db.query(HostEndpoint).filter(
+        HostEndpoint.owner_id == current_user.id,
+        HostEndpoint.owner_type == "user"
+    ).first()
+
+    # 2. Org fallback
+    if not endpoint:
+        memberships = db.query(OrgMember).filter(OrgMember.user_id == current_user.id).all()
+        for m in memberships:
+            org_ep = db.query(HostEndpoint).filter(
+                HostEndpoint.owner_id == m.org_id,
+                HostEndpoint.owner_type == "org"
+            ).first()
+            if org_ep:
+                endpoint = org_ep
+                break
+
+    if not endpoint:
+        return {"status": "offline", "endpoint_url": None, "message": "No endpoint registered"}
+
+    hb = endpoint.last_heartbeat
+    if hb.tzinfo is None:
+        hb = hb.replace(tzinfo=timezone.utc)
+    elapsed = (now - hb).total_seconds()
+
+    if elapsed > HEARTBEAT_TIMEOUT_SECONDS:
+        return {
+            "status": "offline",
+            "endpoint_url": None,
+            "seconds_since_heartbeat": int(elapsed),
+            "message": "Host endpoint offline (no heartbeat in 90 seconds)",
+        }
+
+    return {
+        "status": "online",
+        "endpoint_url": endpoint.endpoint_url,
+        "owner_type": endpoint.owner_type,
+        "owner_id": endpoint.owner_id,
+        "seconds_since_heartbeat": int(elapsed),
+    }

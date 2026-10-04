@@ -3,7 +3,7 @@
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Mic, Send, Bot, Sparkles, Copy, Check, Square, Trash2, Plus, MessageSquare, BookOpen, Brain, Settings, X, Headphones, Paperclip, LogOut, User, Shield, MoreHorizontal, Lock, Crown, Menu, Smartphone, HardDrive } from "lucide-react";
+import { Mic, Send, Bot, Sparkles, Copy, Check, Square, Trash2, Plus, MessageSquare, BookOpen, Brain, Settings, X, Headphones, Paperclip, LogOut, User, Shield, MoreHorizontal, Lock, Crown, Menu, Smartphone, HardDrive, Volume2, VolumeX } from "lucide-react";
 import { signOut, signIn } from "next-auth/react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -13,7 +13,7 @@ import "katex/dist/katex.min.css";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import TextareaAutosize from "react-textarea-autosize";
-import { API_URL, WS_URL, getHeaders, fetchAccount, type Account } from "@/lib/api";
+import { API_URL, WS_URL, getHeaders, fetchAccount, fetchMyEndpoint, type Account, type EndpointInfo } from "@/lib/api";
 import { listChats, getChat, saveChat, deleteChat as deleteVaultChat, requestPersistentStorage, type ChatSummary, type VaultMessage } from "@/lib/vaultDb";
 import PlanCards from "@/components/PlanCards";
 import VaultPanel from "@/components/VaultPanel";
@@ -249,6 +249,8 @@ export default function Home() {
   const [activeModal, setActiveModal] = useState<"courses" | "memory" | "settings" | "vault" | "plans" | null>(null);
   const [isVoiceModeOpen, setIsVoiceModeOpen] = useState(false);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const [discoveredHostUrl, setDiscoveredHostUrl] = useState<string | null>(null);
+  const [isAutoSpeakEnabled, setIsAutoSpeakEnabled] = useState(false);
   const getActivePersonaName = () => {
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
@@ -420,14 +422,25 @@ export default function Home() {
     let reconnectTimer: NodeJS.Timeout;
     let isUnmounted = false;
 
-    const connect = () => {
+    const connect = async () => {
       if (isUnmounted) return;
       if (wsRef.current) wsRef.current.close();
       
-      ws = new WebSocket(`${WS_URL}/ws/chat/${chatId}?token=${apiToken}`);
+      let targetWs = WS_URL;
+      try {
+        const ep = await fetchMyEndpoint(apiToken);
+        if (ep && ep.status === "online" && ep.endpoint_url) {
+          setDiscoveredHostUrl(ep.endpoint_url);
+          targetWs = ep.endpoint_url.replace(/^http/, "ws");
+        }
+      } catch {
+        // Fallback to static WS_URL
+      }
+
+      ws = new WebSocket(`${targetWs}/ws/chat/${chatId}?token=${apiToken}`);
       ws.onopen = () => {
         setIsConnected(true);
-        console.log("WebSocket connected.");
+        console.log("WebSocket connected to:", targetWs);
       };
       ws.onclose = () => {
         setIsConnected(false);
@@ -500,11 +513,11 @@ export default function Home() {
     }
   }, [isVoiceModeOpen]); // Intentionally not including messages in dependency array
 
-  // Voice Mode TTS Trigger
+  // Voice Mode & Read Aloud TTS Trigger
   useEffect(() => {
-    if (!isVoiceModeOpen) return;
+    if (!isVoiceModeOpen && !isAutoSpeakEnabled) return;
     
-    // When generation finishes in voice mode, speak the response
+    // When generation finishes, speak the response
     if (!isGenerating && messages.length > 0) {
       const currentIndex = messages.length - 1;
       const lastMsg = messages[currentIndex];
@@ -513,8 +526,8 @@ export default function Home() {
         lastSpokenIndexRef.current = currentIndex;
         
         window.speechSynthesis.cancel();
-        // Remove markdown artifacts for cleaner speech (naive regex)
-        const cleanText = lastMsg.text.replace(/[*_~`#]/g, "");
+        // Remove markdown artifacts for cleaner speech
+        const cleanText = lastMsg.text.replace(/[*_~`#\[\]\(\)]/g, "");
         const utterance = new SpeechSynthesisUtterance(cleanText);
         
         // Prefer a good native voice if available
@@ -525,7 +538,7 @@ export default function Home() {
         window.speechSynthesis.speak(utterance);
       }
     }
-  }, [isGenerating, isVoiceModeOpen, messages]);
+  }, [isGenerating, isVoiceModeOpen, isAutoSpeakEnabled, messages]);
 
   const [isUploadingChatFile, setIsUploadingChatFile] = useState(false);
   
@@ -1028,6 +1041,19 @@ export default function Home() {
               title="Voice Chat Mode"
             >
               <Headphones className="w-4 h-4" />
+            </button>
+            <button 
+              onClick={() => {
+                const next = !isAutoSpeakEnabled;
+                setIsAutoSpeakEnabled(next);
+                if (!next) window.speechSynthesis.cancel();
+              }} 
+              className={`p-2.5 rounded-xl transition-colors ml-1 ${
+                isAutoSpeakEnabled ? "bg-indigo-600 text-white" : "bg-zinc-800 hover:bg-indigo-500/20 text-zinc-400"
+              }`}
+              title={isAutoSpeakEnabled ? "Read Aloud Enabled (Click to Mute)" : "Read Aloud (Speak assistant reply on finish)"}
+            >
+              {isAutoSpeakEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
             </button>
           </div>
         </div>

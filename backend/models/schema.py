@@ -124,3 +124,31 @@ class StudyProgress(Base):
     subject = Column(String, index=True)
     mastery_percentage = Column(Float)
     weak_topics = Column(JSON)
+
+
+class HostEndpoint(Base):
+    """
+    Registry of host machine endpoints for companion-device and org discovery.
+    owner_type: 'user' or 'org'
+    owner_id: user.id (if owner_type=='user') or org_id (if owner_type=='org')
+    """
+    __tablename__ = "host_endpoints"
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(Integer, index=True, nullable=False)
+    owner_type = Column(String, default="user", nullable=False) # 'user' | 'org'
+    endpoint_url = Column(String, nullable=False)
+    last_heartbeat = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (Index("ix_host_endpoints_owner", "owner_type", "owner_id"),)
+
+
+class OrgMember(Base):
+    """Stub table for future organization-level access and endpoint sharing."""
+    __tablename__ = "org_members"
+    id = Column(Integer, primary_key=True, index=True)
+    org_id = Column(Integer, index=True, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    role = Column(String, default="member", nullable=False) # 'owner' | 'admin' | 'member'
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (Index("ix_org_user", "org_id", "user_id"),)

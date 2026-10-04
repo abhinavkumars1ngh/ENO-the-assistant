@@ -60,3 +60,22 @@ export function formatPrice(paise: number, currency = "INR"): string {
   if (paise === 0) return "Free";
   return new Intl.NumberFormat("en-IN", { style: "currency", currency, maximumFractionDigits: 0 }).format(paise / 100);
 }
+
+export interface EndpointInfo {
+  status: "online" | "offline";
+  endpoint_url: string | null;
+  owner_type?: string;
+  owner_id?: number;
+  seconds_since_heartbeat?: number;
+  message?: string;
+}
+
+export async function fetchMyEndpoint(token: string): Promise<EndpointInfo | null> {
+  try {
+    const res = await fetch(`${API_URL}/api/my-endpoint`, { headers: getHeaders(token) });
+    if (!res.ok) return null;
+    return (await res.json()) as EndpointInfo;
+  } catch {
+    return null;
+  }
+}
