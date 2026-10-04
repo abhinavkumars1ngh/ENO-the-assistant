@@ -2,13 +2,46 @@
 
 # Build script for ENO local package
 
-echo "[Eno Builder] Starting build process..."
 PACKAGE_NAME="eno-local-installer"
 DIST_DIR="dist/$PACKAGE_NAME"
+TARBALL="dist/${PACKAGE_NAME}.tar.gz"
 
-# Clean previous build
+# Check idempotency
+if [ "$1" != "--force" ] && [ -f "$TARBALL" ]; then
+    # Find the newest file in the source directories
+    NEWEST_FILE=$(find backend frontend requirements.txt start_project.py -type f -not -path "*/node_modules/*" -not -path "*/__pycache__/*" -not -name ".DS_Store" -exec stat -f "%m" {} + | sort -n | tail -1)
+    TARBALL_TIME=$(stat -f "%m" "$TARBALL")
+    
+    if [ "$NEWEST_FILE" -le "$TARBALL_TIME" ]; then
+        echo "[Eno Builder] Package is up to date, nothing to rebuild. Run with --force to rebuild anyway."
+        exit 0
+    fi
+    echo "[Eno Builder] Source files changed. Rebuilding..."
+fi
+
+echo "[Eno Builder] Starting build process..."
 rm -rf dist/
 mkdir -p "$DIST_DIR"
+
+echo "[Eno Builder] Generating .env.example..."
+cat << 'ENV_EOF' > "$DIST_DIR/.env.example"
+# ==========================================
+# ENO AI Local Configuration
+# Rename this file to .env and fill it out
+# ==========================================
+
+# (Required) Your Google OAuth Client ID for frontend login
+GOOGLE_CLIENT_ID="your-google-client-id.apps.googleusercontent.com"
+
+# (Required) Your Google OAuth Client Secret
+GOOGLE_CLIENT_SECRET="your-google-client-secret"
+
+# (Required) JWT Secret for backend session signing (generate a random string)
+JWT_SECRET="your-random-jwt-secret-string"
+
+# (Optional) Hugging Face token if your model repo is private/gated
+# HF_TOKEN="hf_..."
+ENV_EOF
 
 echo "[Eno Builder] Copying backend..."
 cp -r backend "$DIST_DIR/"
@@ -18,8 +51,6 @@ echo "[Eno Builder] Building and copying frontend..."
 cd frontend
 npm ci
 npm run build
-# We'll copy the whole frontend for now (since start_project uses npm run dev). 
-# If a static export is preferred in the future, we can run `npm run export` and serve via FastAPI.
 cd ..
 cp -r frontend "$DIST_DIR/"
 
@@ -32,12 +63,53 @@ cp package.json "$DIST_DIR/" 2>/dev/null || true
 cat << 'SETUP_EOF' > "$DIST_DIR/setup.sh"
 #!/bin/bash
 echo "[Eno Setup] Welcome to ENO AI!"
-echo "[Eno Setup] Creating Python virtual environment..."
-python3 -m venv venv312
-source venv312/bin/activate
-echo "[Eno Setup] Installing dependencies..."
-pip install --upgrade pip
-pip install -r requirements.txt
+
+# 1. Cloudflared check
+if ! command -v cloudflared &> /dev/null; then
+    echo "[Eno Setup] 'cloudflared' is not installed."
+    echo "[Eno Setup] Please install it by running: brew install cloudflare/cloudflare/cloudflared"
+    echo "[Eno Setup] After installing, re-run this setup script."
+    exit 1
+fi
+
+# 2. Python Virtual Environment and pip dependencies
+if [ -d "venv312" ]; then
+    echo "[Eno Setup] Virtual environment 'venv312' already exists. Checking dependencies..."
+    source venv312/bin/activate
+    # A simple check: if requirements.txt is newer than the venv directory, reinstall
+    if [ requirements.txt -nt venv312 ]; then
+        echo "[Eno Setup] requirements.txt has changed. Updating Python dependencies..."
+        pip install --upgrade pip
+        pip install -r requirements.txt
+        touch venv312 # Update venv timestamp
+    else
+        echo "[Eno Setup] Python dependencies are already up to date."
+    fi
+else
+    echo "[Eno Setup] Creating Python virtual environment..."
+    python3 -m venv venv312
+    source venv312/bin/activate
+    echo "[Eno Setup] Installing Python dependencies..."
+    pip install --upgrade pip
+    pip install -r requirements.txt
+fi
+
+# 3. Frontend dependencies
+echo "[Eno Setup] Checking frontend dependencies..."
+cd frontend
+if [ -d "node_modules" ] && [ package-lock.json -ot node_modules ]; then
+    echo "[Eno Setup] Frontend dependencies already up to date."
+else
+    echo "[Eno Setup] Installing frontend dependencies (npm ci)..."
+    npm ci
+    touch node_modules # Update node_modules timestamp
+fi
+cd ..
+
+if [ ! -f ".env" ]; then
+    echo "[Eno Setup] WARNING: No .env file found. Please copy .env.example to .env and fill it out!"
+fi
+
 echo "[Eno Setup] Dependencies installed. You can now run: python start_project.py"
 SETUP_EOF
 chmod +x "$DIST_DIR/setup.sh"
