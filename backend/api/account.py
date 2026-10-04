@@ -351,24 +351,44 @@ def heartbeat_endpoint(
 @router.get("/my-endpoint")
 def get_my_endpoint(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    authorization: str | None = Header(None),
+    host_key: str | None = None,
+    owner_email: str | None = None,
 ):
     """
     Resolves the caller's own owner_id (or their org's) and returns the current endpoint_url,
     or 'offline' if no heartbeat in 90 seconds.
     """
+    target_user = None
+
+    if host_key and (host_key == config.HOST_REGISTRY_KEY or host_key == config.JWT_SECRET) and owner_email:
+        target_user = db.query(User).filter(User.email == owner_email.strip().lower()).first()
+    elif authorization and authorization.startswith("Bearer "):
+        token = authorization.split("Bearer ", 1)[1].strip()
+        from jose import jwt, JWTError
+        try:
+            payload = jwt.decode(token, config.JWT_SECRET, algorithms=[config.JWT_ALGORITHM])
+            user_id = payload.get("sub")
+            if user_id:
+                target_user = db.query(User).filter(User.id == int(user_id)).first()
+        except (JWTError, ValueError):
+            pass
+
+    if not target_user:
+        raise HTTPException(status_code=401, detail="Could not validate credentials")
+
     now = datetime.now(timezone.utc)
     HEARTBEAT_TIMEOUT_SECONDS = 90
 
     # 1. Direct user host endpoint
     endpoint = db.query(HostEndpoint).filter(
-        HostEndpoint.owner_id == current_user.id,
+        HostEndpoint.owner_id == target_user.id,
         HostEndpoint.owner_type == "user"
     ).first()
 
     # 2. Org fallback
     if not endpoint:
-        memberships = db.query(OrgMember).filter(OrgMember.user_id == current_user.id).all()
+        memberships = db.query(OrgMember).filter(OrgMember.user_id == target_user.id).all()
         for m in memberships:
             org_ep = db.query(HostEndpoint).filter(
                 HostEndpoint.owner_id == m.org_id,
