@@ -101,3 +101,6 @@ URL_AUGMENT_ENABLED = _bool("ENO_ENABLE_URL_AUGMENT", default=not IS_CLOUD)
 RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "rzp_test_eno_sandbox")
 RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "eno_sandbox_secret_key_123")
 RAZORPAY_TEST_MODE = RAZORPAY_KEY_ID.startswith("rzp_test_")
+
+# --- Host Endpoint Registry Sync ---------------------------------------
+HOST_REGISTRY_KEY = os.getenv("HOST_REGISTRY_KEY", "eno-host-registry-sync-key-2026")

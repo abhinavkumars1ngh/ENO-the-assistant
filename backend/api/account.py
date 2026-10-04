@@ -15,7 +15,8 @@ import time
 from datetime import datetime, timezone
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+import uuid
+from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -201,41 +202,66 @@ class RegisterEndpointRequest(BaseModel):
     endpoint_url: str
     owner_type: str = "user"  # 'user' | 'org'
     org_id: int | None = None
+    owner_email: str | None = None
+    host_key: str | None = None
 
 
 class HeartbeatEndpointRequest(BaseModel):
     owner_type: str = "user"
     org_id: int | None = None
+    owner_email: str | None = None
+    host_key: str | None = None
 
 
 @router.post("/register-endpoint")
 def register_endpoint(
     req: RegisterEndpointRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    authorization: str | None = Header(None),
 ):
     """
     Registers a host's public endpoint URL (e.g. Cloudflare tunnel) to its owner ID.
-    Security: An account can only register as itself or an org it belongs to.
+    Supports either Bearer JWT authentication or host sync key + owner_email authentication.
     """
     url = req.endpoint_url.strip()
     if not url.startswith("http://") and not url.startswith("https://"):
         raise HTTPException(status_code=400, detail="Invalid endpoint URL: must start with http:// or https://")
 
-    if req.owner_type == "user":
-        target_owner_id = current_user.id
-    elif req.owner_type == "org":
-        if not req.org_id:
-            raise HTTPException(status_code=400, detail="org_id is required when owner_type is 'org'")
-        membership = db.query(OrgMember).filter(
-            OrgMember.org_id == req.org_id,
-            OrgMember.user_id == current_user.id
-        ).first()
-        if not membership:
-            raise HTTPException(status_code=403, detail="Forbidden: You are not a member of this organization")
-        target_owner_id = req.org_id
-    else:
-        raise HTTPException(status_code=400, detail="owner_type must be 'user' or 'org'")
+    target_owner_id = None
+    # 1. Authorize via host_key + owner_email (for headless Mac background sync)
+    if req.host_key and (req.host_key == config.HOST_REGISTRY_KEY or req.host_key == config.JWT_SECRET) and req.owner_email:
+        email = req.owner_email.strip().lower()
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            user = User(email=email, role="user", plan="free", public_id=uuid.uuid4().hex)
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        target_owner_id = user.id
+    # 2. Authorize via Bearer session token
+    elif authorization and authorization.startswith("Bearer "):
+        token = authorization.split("Bearer ", 1)[1].strip()
+        from jose import jwt, JWTError
+        try:
+            payload = jwt.decode(token, config.JWT_SECRET, algorithms=[config.JWT_ALGORITHM])
+            user_id = payload.get("sub")
+            if user_id:
+                user = db.query(User).filter(User.id == int(user_id)).first()
+                if user:
+                    if req.owner_type == "user":
+                        target_owner_id = user.id
+                    elif req.owner_type == "org":
+                        if not req.org_id:
+                            raise HTTPException(status_code=400, detail="org_id is required when owner_type is 'org'")
+                        membership = db.query(OrgMember).filter(OrgMember.org_id == req.org_id, OrgMember.user_id == user.id).first()
+                        if not membership:
+                            raise HTTPException(status_code=403, detail="Forbidden: You are not a member of this organization")
+                        target_owner_id = req.org_id
+        except (JWTError, ValueError):
+            pass
+
+    if target_owner_id is None:
+        raise HTTPException(status_code=401, detail="Could not validate credentials or host key")
 
     now = datetime.now(timezone.utc)
     endpoint = db.query(HostEndpoint).filter(
@@ -270,26 +296,36 @@ def register_endpoint(
 def heartbeat_endpoint(
     req: HeartbeatEndpointRequest | None = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    authorization: str | None = Header(None),
 ):
     """Refreshes the host heartbeat timestamp. Offline if no heartbeat in 90 seconds."""
     owner_type = req.owner_type if req else "user"
-    org_id = req.org_id if req else None
+    target_owner_id = None
 
-    if owner_type == "user":
-        target_owner_id = current_user.id
-    elif owner_type == "org":
-        if not org_id:
-            raise HTTPException(status_code=400, detail="org_id is required when owner_type is 'org'")
-        membership = db.query(OrgMember).filter(
-            OrgMember.org_id == org_id,
-            OrgMember.user_id == current_user.id
-        ).first()
-        if not membership:
-            raise HTTPException(status_code=403, detail="Forbidden: You are not a member of this organization")
-        target_owner_id = org_id
-    else:
-        raise HTTPException(status_code=400, detail="owner_type must be 'user' or 'org'")
+    if req and req.host_key and (req.host_key == config.HOST_REGISTRY_KEY or req.host_key == config.JWT_SECRET) and req.owner_email:
+        email = req.owner_email.strip().lower()
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            user = User(email=email, role="user", plan="free", public_id=uuid.uuid4().hex)
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        target_owner_id = user.id
+    elif authorization and authorization.startswith("Bearer "):
+        token = authorization.split("Bearer ", 1)[1].strip()
+        from jose import jwt, JWTError
+        try:
+            payload = jwt.decode(token, config.JWT_SECRET, algorithms=[config.JWT_ALGORITHM])
+            user_id = payload.get("sub")
+            if user_id:
+                user = db.query(User).filter(User.id == int(user_id)).first()
+                if user:
+                    target_owner_id = user.id
+        except (JWTError, ValueError):
+            pass
+
+    if target_owner_id is None:
+        raise HTTPException(status_code=401, detail="Could not validate credentials or host key")
 
     now = datetime.now(timezone.utc)
     endpoint = db.query(HostEndpoint).filter(
@@ -298,9 +334,16 @@ def heartbeat_endpoint(
     ).first()
 
     if not endpoint:
-        raise HTTPException(status_code=404, detail="No endpoint registered for this owner")
+        endpoint = HostEndpoint(
+            owner_id=target_owner_id,
+            owner_type=owner_type,
+            endpoint_url=None,
+            last_heartbeat=now,
+        )
+        db.add(endpoint)
+    else:
+        endpoint.last_heartbeat = now
 
-    endpoint.last_heartbeat = now
     db.commit()
     return {"status": "alive", "last_heartbeat": now.isoformat()}
 

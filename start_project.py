@@ -82,7 +82,7 @@ else:
     subprocess.run([python_bin, "-c", dl_script])
 
 def get_host_auth_token(base_dir, python_bin):
-    """Obtain a valid JWT session token for the real authenticated owner."""
+    """Obtain a valid JWT session token and owner email for the real authenticated owner."""
     cmd = [
         python_bin, "-c",
         """
@@ -97,9 +97,9 @@ if owner.get('owner_id') is not None:
     user = db.query(User).filter(User.id == owner['owner_id']).first()
 if not user:
     # Check if a user with a real email has signed in
-    user = db.query(User).filter(User.email != None, User.email != 'host@local').first()
+    user = db.query(User).filter(User.email.isnot(None), User.email != 'host@local').first()
 if user:
-    print(default_token_for(user))
+    print(f"{default_token_for(user)}|||{user.email}")
 else:
     print('')
 """
@@ -109,11 +109,12 @@ else:
 
 
 def register_endpoint_and_heartbeat(base_dir, python_bin, endpoint_url):
-    """Registers the discovered Cloudflare tunnel URL and maintains a 30s heartbeat."""
+    """Registers the discovered Cloudflare tunnel URL to local and stable Render registry."""
     import json
     import urllib.request
     import urllib.error
     import time
+    import os
 
     # Save to storage/tunnel_url.txt so sync_oauth_user can link immediately upon login
     try:
@@ -124,55 +125,63 @@ def register_endpoint_and_heartbeat(base_dir, python_bin, endpoint_url):
     except Exception as e:
         print(f"[Eno Registry] Notice: Could not save tunnel_url.txt: {e}")
 
-    api_url = "http://127.0.0.1:8000/api/register-endpoint"
+    registry_targets = [
+        ("local", "http://127.0.0.1:8000/api/register-endpoint"),
+        ("Render stable host", os.getenv("ENO_REGISTRY_URL", "https://eno-api.onrender.com/api/register-endpoint")),
+    ]
 
     print("\n[Eno Registry] ⏳ Auto-registration active. Waiting for owner to sign in through browser...")
-    registered = False
+    token = ""
+    owner_email = ""
+    while not token:
+        out = get_host_auth_token(base_dir, python_bin)
+        if out and "|||" in out:
+            token, owner_email = out.split("|||", 1)
+            break
+        time.sleep(2)
 
-    # Retry loop: polls until an authenticated owner session exists and registers
-    while not registered:
-        token = get_host_auth_token(base_dir, python_bin)
-        if token:
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {token}",
-            }
+    # Register with all targets
+    for name, api_url in registry_targets:
+        payload = json.dumps({
+            "endpoint_url": endpoint_url,
+            "owner_type": "user",
+            "owner_email": owner_email,
+            "host_key": "eno-host-registry-sync-key-2026",
+        }).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        }
+        for attempt in range(1, 6):
             try:
-                payload = json.dumps({"endpoint_url": endpoint_url, "owner_type": "user"}).encode("utf-8")
                 req = urllib.request.Request(api_url, data=payload, headers=headers, method="POST")
-                with urllib.request.urlopen(req, timeout=5) as resp:
+                with urllib.request.urlopen(req, timeout=8) as resp:
                     if resp.status == 200:
                         data = json.loads(resp.read().decode())
-                        print(f"\n[Eno Registry] ✅ Auto-registered host endpoint: {endpoint_url} (owner_id={data.get('owner_id')})")
-                        registered = True
+                        print(f"[Eno Registry] ✅ Auto-registered endpoint with {name}: {endpoint_url} (owner={owner_email})")
                         break
-            except urllib.error.HTTPError as e:
-                err_body = e.read().decode('utf-8', errors='replace')
-                print(f"[Eno Registry] ⚠️ Registration HTTP {e.code} error: {err_body}")
             except Exception as e:
-                print(f"[Eno Registry] ⚠️ Registration network error: {e}")
-        time.sleep(3)
+                time.sleep(1.5)
 
-    # 30-second heartbeat loop
+    # 30-second heartbeat loop to maintain endpoint freshness
     while True:
         time.sleep(30)
-        try:
-            token = get_host_auth_token(base_dir, python_bin)
-            if not token:
-                continue
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {token}",
-            }
-            payload = json.dumps({"owner_type": "user"}).encode("utf-8")
-            req = urllib.request.Request(api_url, data=payload, headers=headers, method="PATCH")
-            with urllib.request.urlopen(req, timeout=5) as resp:
+        heartbeat_payload = json.dumps({
+            "owner_type": "user",
+            "owner_email": owner_email,
+            "host_key": "eno-host-registry-sync-key-2026",
+        }).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        }
+        for name, api_url in registry_targets:
+            try:
+                req = urllib.request.Request(api_url, data=heartbeat_payload, headers=headers, method="PATCH")
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    pass
+            except Exception:
                 pass
-        except urllib.error.HTTPError as e:
-            err_body = e.read().decode('utf-8', errors='replace')
-            print(f"[Eno Registry] ⚠️ Heartbeat HTTP {e.code}: {err_body}")
-        except Exception:
-            pass
 
 
 def main():

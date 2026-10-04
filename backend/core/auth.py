@@ -68,6 +68,9 @@ _instance_owner_email: Optional[str] = None
 
 
 def get_instance_owner() -> dict:
+    from backend.core.config import IS_CLOUD
+    if IS_CLOUD:
+        return {"owner_id": None, "owner_email": None}
     return {
         "owner_id": _instance_owner_id,
         "owner_email": _instance_owner_email,
@@ -75,6 +78,9 @@ def get_instance_owner() -> dict:
 
 
 def set_instance_owner(user_id: int, email: str = ""):
+    from backend.core.config import IS_CLOUD
+    if IS_CLOUD:
+        return
     global _instance_owner_id, _instance_owner_email
     if _instance_owner_id is None:
         _instance_owner_id = user_id
@@ -83,6 +89,9 @@ def set_instance_owner(user_id: int, email: str = ""):
 
 
 def verify_instance_owner(user: schema.User):
+    from backend.core.config import IS_CLOUD
+    if IS_CLOUD:
+        return
     global _instance_owner_id
     if _instance_owner_id is None:
         set_instance_owner(user.id, getattr(user, "email", ""))

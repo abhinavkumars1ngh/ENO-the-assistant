@@ -1,21 +1,30 @@
+export function getStableRegistryUrl(): string {
+  if (typeof window !== "undefined" && window.location.hostname === "localhost") {
+    return (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
+  }
+  return (process.env.NEXT_PUBLIC_API_URL || "https://eno-api.onrender.com").replace(/\/+$/, "");
+}
+
 export function getApiUrl(): string {
   if (typeof window !== "undefined") {
     const saved = localStorage.getItem("eno_host_endpoint");
     if (saved && saved.startsWith("http")) return saved.replace(/\/+$/, "");
+    if (window.location.hostname === "localhost") return (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
   }
-  return (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
+  return (process.env.NEXT_PUBLIC_API_URL || "https://eno-api.onrender.com").replace(/\/+$/, "");
 }
 
 export function getWsUrl(): string {
   if (typeof window !== "undefined") {
     const saved = localStorage.getItem("eno_host_endpoint");
     if (saved && saved.startsWith("http")) return saved.replace(/^http/, "ws").replace(/\/+$/, "");
+    if (window.location.hostname === "localhost") return (process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000").replace(/\/+$/, "");
   }
-  return (process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000").replace(/\/+$/, "");
+  return (process.env.NEXT_PUBLIC_WS_URL || "wss://eno-api.onrender.com").replace(/\/+$/, "");
 }
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-export const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
+export const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://eno-api.onrender.com";
+export const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "wss://eno-api.onrender.com";
 
 export const getHeaders = (token: string): Record<string, string> => ({
   // Only needed when tunnelling through ngrok (local dev); a custom header forces a CORS preflight otherwise.
@@ -88,11 +97,14 @@ export interface EndpointInfo {
 
 export async function fetchMyEndpoint(token: string): Promise<EndpointInfo | null> {
   try {
-    const res = await fetch(`${getApiUrl()}/api/my-endpoint`, { headers: getHeaders(token) });
+    const registryUrl = getStableRegistryUrl();
+    const res = await fetch(`${registryUrl}/api/my-endpoint`, { headers: getHeaders(token) });
     if (!res.ok) return null;
     const data = (await res.json()) as EndpointInfo;
     if (data?.endpoint_url && typeof window !== "undefined") {
       localStorage.setItem("eno_host_endpoint", data.endpoint_url);
+    } else if (data?.status === "offline" && typeof window !== "undefined") {
+      localStorage.removeItem("eno_host_endpoint");
     }
     return data;
   } catch {
