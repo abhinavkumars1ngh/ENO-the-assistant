@@ -219,7 +219,7 @@ class ConversationEngine:
                 prompt += identity_prefix
             yield {"type": "token", "content": identity_prefix}
 
-        buffer = ""
+        raw_text = ""
         async for chunk in llm_service.stream_generate(
             prompt,
             max_tokens=config["max_tokens"],
@@ -227,41 +227,56 @@ class ConversationEngine:
             model_type=model_type,
             messages=chat_messages,
         ):
-            buffer += chunk
+            raw_text += chunk
+            
+        import re
+        MOOD_PATTERN = re.compile(r'\[MOOD:\s*([A-Za-z]+)\]?', re.IGNORECASE)
 
-            # Wait for closing bracket if we are currently inside a bracket
-            if "[" in buffer and "]" not in buffer:
-                continue
-
-            # We have a full segment to process
-            # Extract mood if present ANYWHERE in the buffer
-            mood_match = re.search(r'\[(?:.*?MOOD:\s*)([^\|\]\n]+?)\s*(?:\|\s*NAME:\s*([^\]\n]+))?\]', buffer, re.IGNORECASE)
-            if mood_match:
-                mood = mood_match.group(1).strip()
-                name = mood_match.group(2).strip() if mood_match.group(2) else "Persona"
-                yield {"type": "mood", "content": mood, "name": name}
-
-            # Strip the tag from the buffer
-            safe_buffer = re.sub(r'\[(?:.*?MOOD:\s*[^\|\]\n]+|.*?NAME:\s*[^\]\n]+)(?:\|[^\]]+)?\]\s*', '', buffer, flags=re.IGNORECASE)
-            # Remove any generic [System Note: ...] or [CRITICAL...] hallucinations that AI might leak
-            safe_buffer = re.sub(r'\[(?:System Note|CRITICAL).*?\]\s*', '', safe_buffer, flags=re.IGNORECASE)
-
-            if safe_buffer:
-                yield {"type": "token", "content": safe_buffer}
-            buffer = ""
-
-        # Flush whatever is left in buffer
-        if buffer:
-            mood_match = re.search(r'\[(?:.*?MOOD:\s*)([^\|\]\n]+?)\s*(?:\|\s*NAME:\s*([^\]\n]+))?\]', buffer, re.IGNORECASE)
-            if mood_match:
-                mood = mood_match.group(1).strip()
-                name = mood_match.group(2).strip() if mood_match.group(2) else "Persona"
-                yield {"type": "mood", "content": mood, "name": name}
-
-            safe_buffer = re.sub(r'\[(?:.*?MOOD:\s*[^\|\]\n]+|.*?NAME:\s*[^\]\n]+)(?:\|[^\]]+)?\]\s*', '', buffer, flags=re.IGNORECASE)
-            safe_buffer = re.sub(r'\[(?:System Note|CRITICAL).*?\]\s*', '', safe_buffer, flags=re.IGNORECASE)
-            if safe_buffer:
-                yield {"type": "token", "content": safe_buffer}
+        def extract_mood(text: str):
+            match = MOOD_PATTERN.search(text)
+            mood = None
+            clean = text
+            if match:
+                mood = match.group(1).strip().capitalize()
+                clean = (text[:match.start()] + text[match.end():]).strip()
+            
+            # Remove generic system note hallucinations
+            clean = re.sub(r'\[(?:System Note|CRITICAL).*?\]\s*', '', clean, flags=re.IGNORECASE).strip()
+            return clean, mood
+            
+        clean_text, mood = extract_mood(raw_text)
+        
+        if not clean_text:
+            print(f"[Eno AI] Warning: Empty response detected. Raw output: {raw_text}")
+            
+            # Retry once with a stronger prompt
+            retry_prompt = prompt + "\n\n[SYSTEM: Your last response was missing its reply text. ALWAYS include a full conversational reply BEFORE the mood tag.]\n"
+            if use_remote:
+                chat_messages.append({"role": "system", "content": "Your last response was missing its reply text. ALWAYS include a full conversational reply BEFORE the mood tag."})
+                
+            raw_text = ""
+            async for chunk in llm_service.stream_generate(
+                retry_prompt if not use_remote else None,
+                max_tokens=config["max_tokens"],
+                temp=config["temp"],
+                model_type=model_type,
+                messages=chat_messages,
+            ):
+                raw_text += chunk
+                
+            clean_text, mood = extract_mood(raw_text)
+            
+            if not clean_text:
+                print(f"[Eno AI] Warning: Empty response on retry. Raw output: {raw_text}")
+                clean_text = "..."
+                
+        if mood:
+            yield {"type": "mood", "content": mood, "name": "Persona"}
+            
+        # Yield the full text in chunks to simulate streaming if desired, 
+        # or just yield it all at once since the client just appends.
+        if clean_text:
+            yield {"type": "token", "content": clean_text}
 
         # The reply is persisted by the client in its on-device vault. Nothing is stored here.
 
