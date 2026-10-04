@@ -10,7 +10,7 @@ def is_redis_running(host="127.0.0.1", port=6379, timeout=0.5):
 
 # Dynamically choose Celery broker/backend
 if is_redis_running():
-    print("[Eno AI] Redis detected on port 6379. Connecting Celery to Docker/Redis.")
+    print("[Eno AI] Redis detected on port 6379. Connecting Celery to Redis.")
     BROKER_URL = "redis://127.0.0.1:6379/0"
     BACKEND_URL = "redis://127.0.0.1:6379/0"
     EAGER_MODE = False

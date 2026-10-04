@@ -1,4 +1,4 @@
-from backend.core.qdrant_setup import get_qdrant_client
+from backend.core.qdrant_setup import client as qdrant_client
 from backend.services.embedding_service import embedding_service
 from backend.services.rerank_service import rerank_service
 from qdrant_client.models import Filter, FieldCondition, MatchValue
@@ -9,13 +9,9 @@ class RetrievalEngine:
 
     def retrieve(self, query: str, top_k: int = 20, filter_course: str = None, chat_id: str = None) -> list[dict]:
         """
-        Hybrid retrieval (Vector + BM25 theoretically, here implemented as Vector search)
-        followed by Cross-Encoder Reranking.
+        Serverless in-process vector retrieval followed by Cross-Encoder Reranking.
+        Runs embedded without Docker or external network calls.
         """
-        cl = get_qdrant_client()
-        if not cl:
-            return []
-
         query_vector = embedding_service.embed_text(query)
 
         query_filter = None
@@ -35,20 +31,22 @@ class RetrievalEngine:
             # If no chat_id provided, ONLY search global pdfs (do not leak other chat's temporary files)
             must_conditions.append(FieldCondition(key="source_type", match=MatchValue(value="pdf")))
             
-        if must_conditions or should_conditions:
-            query_filter = Filter(must=must_conditions, should=should_conditions)
+        filter_kwargs = {}
+        if must_conditions:
+            filter_kwargs["must"] = must_conditions
+        if should_conditions:
+            filter_kwargs["should"] = should_conditions
 
-        # 1. Retrieve candidate chunks from Qdrant
-        try:
-            search_result = cl.search(
-                collection_name=self.collection_name,
-                query_vector=query_vector,
-                query_filter=query_filter,
-                limit=top_k
-            )
-        except Exception as e:
-            print(f"[Eno AI] Non-fatal RAG search error: {e}")
-            return []
+        if filter_kwargs:
+            query_filter = Filter(**filter_kwargs)
+
+        # 1. Retrieve candidate chunks from embedded Qdrant index
+        search_result = qdrant_client.search(
+            collection_name=self.collection_name,
+            query_vector=query_vector,
+            query_filter=query_filter,
+            limit=top_k
+        )
 
         if not search_result:
             return []

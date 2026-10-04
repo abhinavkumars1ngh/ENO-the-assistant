@@ -43,26 +43,7 @@ def kill_port(port):
     except Exception:
         pass
 
-def is_docker_running():
-    try:
-        result = subprocess.run(["docker", "info"], capture_output=True, text=True)
-        return result.returncode == 0
-    except FileNotFoundError:
-        return False
 
-def start_container(name, image, ports, volumes=None):
-    result = subprocess.run(["docker", "ps", "-a", "-q", "-f", f"name={name}"], capture_output=True, text=True)
-    if result.stdout.strip():
-        subprocess.run(["docker", "start", name], capture_output=True)
-    else:
-        cmd = ["docker", "run", "-d", "--name", name]
-        for p in ports:
-            cmd.extend(["-p", p])
-        if volumes:
-            for v in volumes:
-                cmd.extend(["-v", v])
-        cmd.append(image)
-        subprocess.run(cmd, capture_output=True)
 
 def download_models(base_dir, python_bin):
     """
@@ -110,9 +91,13 @@ def main():
     subprocess.run(["pkill", "-f", "caffeinate"], capture_output=True)
     subprocess.run(["pkill", "-f", "uvicorn backend.main:app"], capture_output=True)
 
-    lock_file = os.path.join(base_dir, "storage", "qdrant", ".lock")
-    if os.path.exists(lock_file):
-        os.remove(lock_file)
+    for lock_sub in ["qdrant_local", "qdrant"]:
+        lf = os.path.join(base_dir, "storage", lock_sub, ".lock")
+        if os.path.exists(lf):
+            try:
+                os.remove(lf)
+            except OSError:
+                pass
 
     python_bin = os.path.join(base_dir, "venv312", "bin", "python")
     if not os.path.exists(python_bin):
@@ -135,26 +120,7 @@ def main():
 
     # -------------------------------------------------
 
-    if is_docker_running():
-        print("[Eno AI] Docker is running! Starting Qdrant and Redis containers...")
-        start_container(
-            "eno_qdrant",
-            "qdrant/qdrant",
-            ["6333:6333", "6334:6334"],
-            [f"{os.path.join(base_dir, 'storage', 'qdrant')}:/qdrant/storage"]
-        )
-        start_container("eno_redis", "redis", ["6379:6379"])
-
-        print("[Eno AI] Starting Celery worker...")
-        celery = subprocess.Popen(
-            [python_bin, "-m", "celery", "-A", "backend.core.celery_app", "worker", "--loglevel=info"],
-            cwd=base_dir,
-            env=os.environ.copy()
-        )
-        processes.append(celery)
-        time.sleep(3)
-    else:
-        print("[Eno AI] Docker is skipped, running completely local (Qdrant on disk, Celery in-memory)...")
+    print("[Eno AI] Running 100% serverless local stack (embedded Qdrant on disk, zero Docker required)...")
 
     print("[Eno AI] Starting backend API (FastAPI) and initializing MLX models on Apple Silicon...")
     env = os.environ.copy()
