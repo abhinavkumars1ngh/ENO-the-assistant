@@ -3,7 +3,7 @@
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Mic, Send, Bot, Sparkles, Copy, Check, Square, Trash2, Plus, MessageSquare, BookOpen, Brain, Settings, X, Headphones, Paperclip, LogOut, User, Shield, MoreHorizontal, Lock, Crown, Menu, Smartphone, HardDrive, Volume2, VolumeX } from "lucide-react";
+import { Mic, Send, Bot, Sparkles, Copy, Check, Square, Trash2, Plus, MessageSquare, BookOpen, Brain, Settings, X, Headphones, Paperclip, LogOut, User, Shield, MoreHorizontal, Lock, Crown, Menu, Smartphone, HardDrive, Volume2, VolumeX, Share } from "lucide-react";
 import { signOut, signIn } from "next-auth/react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -251,6 +251,7 @@ export default function Home() {
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [discoveredHostUrl, setDiscoveredHostUrl] = useState<string | null>(null);
   const [isAutoSpeakEnabled, setIsAutoSpeakEnabled] = useState(false);
+  const [showIosPrompt, setShowIosPrompt] = useState(false);
   const getActivePersonaName = () => {
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
@@ -398,6 +399,37 @@ export default function Home() {
     window.addEventListener("beforeinstallprompt", onPrompt);
     return () => window.removeEventListener("beforeinstallprompt", onPrompt);
   }, []);
+
+  // iOS Safari "Add to Home Screen" prompt: One-time dismissible prompt after the first chat on mobile Safari,
+  // explaining that installing prevents iOS from purging IndexedDB vault history after 7 days of inactivity.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const isDismissed = localStorage.getItem("eno_ios_pwa_dismissed") === "true";
+      if (isDismissed) return;
+
+      const ua = window.navigator.userAgent;
+      const isIos = /iPad|iPhone|iPod/.test(ua) && !(window as any).MSStream;
+      const isSafari = /Safari/i.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS|Chrome/i.test(ua);
+      const isStandalone = (window.navigator as any).standalone === true || window.matchMedia("(display-mode: standalone)").matches;
+
+      const hasCompletedExchange = messages.some((m) => m.role === "eno" && (m.text?.length ?? 0) > 0);
+      if (isIos && isSafari && !isStandalone && hasCompletedExchange && !isGenerating) {
+        setShowIosPrompt(true);
+      }
+    } catch {
+      // Ignore storage/UA errors
+    }
+  }, [messages, isGenerating]);
+
+  const dismissIosPrompt = () => {
+    setShowIosPrompt(false);
+    try {
+      localStorage.setItem("eno_ios_pwa_dismissed", "true");
+    } catch {
+      // Ignore
+    }
+  };
 
   // Switch chats: load messages from the vault
   useEffect(() => {
@@ -912,6 +944,40 @@ export default function Home() {
             Signed in, but the ENO server couldn&apos;t be reached. Try signing out and back in.
           </div>
         )}
+        {showIosPrompt && (
+          <div className="mx-4 mt-3 mb-1 p-3.5 bg-gradient-to-r from-indigo-950/80 to-zinc-900/90 border border-indigo-500/30 rounded-2xl shadow-xl flex items-start gap-3 animate-in fade-in slide-in-from-top-2 duration-300">
+            <div className="p-2 bg-indigo-500/20 text-indigo-400 rounded-xl flex-shrink-0 mt-0.5">
+              <Share className="w-4 h-4" />
+            </div>
+            <div className="flex-1 min-w-0 pr-1">
+              <div className="flex items-center justify-between gap-2">
+                <h4 className="text-xs font-semibold text-white">Save Chat History Permanently</h4>
+                <button
+                  onClick={dismissIosPrompt}
+                  className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
+                  aria-label="Dismiss banner"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <p className="text-[12px] leading-relaxed text-zinc-300 mt-1">
+                Safari purges local browser vaults after 7 days of inactivity. Tap{" "}
+                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-white/10 text-indigo-300 font-medium text-[11px]">
+                  <Share className="w-3 h-3 inline" /> Share
+                </span>{" "}
+                then <strong className="text-white font-medium">&ldquo;Add to Home Screen&rdquo;</strong> to keep your offline chat vault safe forever.
+              </p>
+              <div className="mt-2.5 flex items-center gap-2">
+                <button
+                  onClick={dismissIosPrompt}
+                  className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors shadow-sm"
+                >
+                  Got it
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
           <div className="max-w-3xl mx-auto px-4 py-6 flex flex-col gap-5">
             {messages.length === 0 ? (
@@ -945,10 +1011,18 @@ export default function Home() {
             )}
             
             {isGenerating && messages.length > 0 && messages[messages.length - 1]?.role !== "eno" && (
-              <div className="flex items-center gap-3 pl-10 pt-2 text-indigo-400 text-sm">
-                <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" />
-                <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce delay-150" />
-                <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce delay-300" />
+              <div className="flex items-start gap-3 py-1 animate-in fade-in duration-200">
+                <div className="w-7 h-7 rounded-lg bg-indigo-500/80 flex items-center justify-center flex-shrink-0 shadow-lg shadow-indigo-500/20 animate-pulse">
+                  <Bot className="w-4 h-4 text-white" />
+                </div>
+                <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-2xl bg-zinc-900/90 border border-white/5 text-zinc-300 shadow-sm">
+                  <span className="text-xs font-medium text-indigo-300 tracking-wide">Eno is thinking</span>
+                  <div className="flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" />
+                    <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:0.2s]" />
+                    <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:0.4s]" />
+                  </div>
+                </div>
               </div>
             )}
           </div>

@@ -79,6 +79,27 @@ def sync_oauth_user(data: GoogleAuthSync, db: Session = Depends(get_db)):
     if owner["owner_id"] is None:
         set_instance_owner(user.id, email)
 
+    # If start_project.py has captured a local Cloudflare tunnel URL, auto-register it to this user
+    try:
+        from backend.models.schema import HostEndpoint
+        from datetime import datetime, timezone
+        tunnel_file = config.STORAGE_DIR / "tunnel_url.txt"
+        if tunnel_file.exists():
+            t_url = tunnel_file.read_text().strip()
+            if t_url.startswith("http"):
+                now = datetime.now(timezone.utc)
+                ep = db.query(HostEndpoint).filter(HostEndpoint.owner_id == user.id, HostEndpoint.owner_type == "user").first()
+                if ep:
+                    ep.endpoint_url = t_url
+                    ep.last_heartbeat = now
+                else:
+                    ep = HostEndpoint(owner_id=user.id, owner_type="user", endpoint_url=t_url, last_heartbeat=now)
+                    db.add(ep)
+                db.commit()
+                print(f"[Eno Registry] 🚀 Auto-registered tunnel {t_url} to authenticated owner {email}")
+    except Exception as e:
+        print(f"[Eno Registry] Notice: could not auto-link tunnel on login: {e}")
+
     return _session_payload(user)
 
 

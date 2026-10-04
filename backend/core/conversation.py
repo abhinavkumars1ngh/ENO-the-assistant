@@ -254,6 +254,8 @@ class ConversationEngine:
         TAG_LOOKAHEAD = 50
         buffer = ""
         yielded_anything = False
+        captured_mood = None
+        captured_name = None
         
         async for chunk in llm_service.stream_generate(
             prompt,
@@ -263,6 +265,18 @@ class ConversationEngine:
             messages=chat_messages,
         ):
             buffer += chunk
+
+            # Catch leading [MOOD: tag if emitted at the very beginning of the response
+            if not yielded_anything and buffer.lstrip().startswith("["):
+                lead_m = MOOD_PATTERN.match(buffer.lstrip())
+                if lead_m:
+                    if "]" not in buffer and len(buffer) < 60:
+                        continue
+                    captured_mood = lead_m.group(1).strip().capitalize()
+                    if lead_m.group(2):
+                        captured_name = lead_m.group(2).strip()
+                    buffer = buffer.lstrip()[lead_m.end():].lstrip()
+
             if len(buffer) > TAG_LOOKAHEAD:
                 last_bracket = buffer.rfind('[')
                 if last_bracket != -1 and last_bracket > len(buffer) - TAG_LOOKAHEAD:
@@ -277,7 +291,13 @@ class ConversationEngine:
                         yielded_anything = True
                     buffer = buffer[split_idx:]
                     
-        clean_tail, mood, name = extract_mood(buffer)
+        clean_tail, tail_mood, tail_name = extract_mood(buffer)
+        mood = tail_mood or captured_mood
+        name = tail_name or captured_name
+        if not active_persona:
+            name = "Eno"
+        else:
+            name = name or "Persona"
         
         if not yielded_anything and not clean_tail:
             print(f"[Eno AI] Warning: Empty response detected. Raw tail: {buffer}")
@@ -289,6 +309,8 @@ class ConversationEngine:
                 retry_messages.append({"role": "system", "content": "Your last response was missing its reply text. ALWAYS include a full conversational reply BEFORE the mood tag."})
                 
             buffer = ""
+            captured_mood = None
+            captured_name = None
             async for chunk in llm_service.stream_generate(
                 retry_prompt if not use_remote else None,
                 max_tokens=config["max_tokens"],
@@ -297,6 +319,17 @@ class ConversationEngine:
                 messages=retry_messages,
             ):
                 buffer += chunk
+
+                if not yielded_anything and buffer.lstrip().startswith("["):
+                    lead_m = MOOD_PATTERN.match(buffer.lstrip())
+                    if lead_m:
+                        if "]" not in buffer and len(buffer) < 60:
+                            continue
+                        captured_mood = lead_m.group(1).strip().capitalize()
+                        if lead_m.group(2):
+                            captured_name = lead_m.group(2).strip()
+                        buffer = buffer.lstrip()[lead_m.end():].lstrip()
+
                 if len(buffer) > TAG_LOOKAHEAD:
                     last_bracket = buffer.rfind('[')
                     if last_bracket != -1 and last_bracket > len(buffer) - TAG_LOOKAHEAD:
@@ -311,7 +344,14 @@ class ConversationEngine:
                             yielded_anything = True
                         buffer = buffer[split_idx:]
                         
-            clean_tail, mood, name = extract_mood(buffer)
+            clean_tail, tail_mood, tail_name = extract_mood(buffer)
+            mood = tail_mood or captured_mood
+            name = tail_name or captured_name
+            if not active_persona:
+                name = "Eno"
+            else:
+                name = name or "Persona"
+
             if not yielded_anything and not clean_tail:
                 print(f"[Eno AI] Warning: Empty response on retry. Raw tail: {buffer}")
                 clean_tail = "..."
