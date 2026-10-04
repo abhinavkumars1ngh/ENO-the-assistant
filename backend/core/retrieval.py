@@ -1,4 +1,4 @@
-from backend.core.qdrant_setup import client as qdrant_client
+from backend.core.qdrant_setup import get_qdrant_client
 from backend.services.embedding_service import embedding_service
 from backend.services.rerank_service import rerank_service
 from qdrant_client.models import Filter, FieldCondition, MatchValue
@@ -12,6 +12,10 @@ class RetrievalEngine:
         Hybrid retrieval (Vector + BM25 theoretically, here implemented as Vector search)
         followed by Cross-Encoder Reranking.
         """
+        cl = get_qdrant_client()
+        if not cl:
+            return []
+
         query_vector = embedding_service.embed_text(query)
 
         query_filter = None
@@ -35,12 +39,16 @@ class RetrievalEngine:
             query_filter = Filter(must=must_conditions, should=should_conditions)
 
         # 1. Retrieve candidate chunks from Qdrant
-        search_result = qdrant_client.search(
-            collection_name=self.collection_name,
-            query_vector=query_vector,
-            query_filter=query_filter,
-            limit=top_k
-        )
+        try:
+            search_result = cl.search(
+                collection_name=self.collection_name,
+                query_vector=query_vector,
+                query_filter=query_filter,
+                limit=top_k
+            )
+        except Exception as e:
+            print(f"[Eno AI] Non-fatal RAG search error: {e}")
+            return []
 
         if not search_result:
             return []

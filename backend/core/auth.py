@@ -62,6 +62,38 @@ def verify_google_id_token(raw_id_token: str) -> dict:
     return claims
 
 
+# In-memory tracking of the running instance owner
+_instance_owner_id: Optional[int] = None
+_instance_owner_email: Optional[str] = None
+
+
+def get_instance_owner() -> dict:
+    return {
+        "owner_id": _instance_owner_id,
+        "owner_email": _instance_owner_email,
+    }
+
+
+def set_instance_owner(user_id: int, email: str = ""):
+    global _instance_owner_id, _instance_owner_email
+    if _instance_owner_id is None:
+        _instance_owner_id = user_id
+        _instance_owner_email = email
+        print(f"[Eno Auth] Instance owner pinned to user_id={user_id} ({email})")
+
+
+def verify_instance_owner(user: schema.User):
+    global _instance_owner_id
+    if _instance_owner_id is None:
+        set_instance_owner(user.id, getattr(user, "email", ""))
+        return
+    if _instance_owner_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Forbidden: This ENO instance is locked to owner account ID {_instance_owner_id}. Access denied for user ID {user.id}.",
+        )
+
+
 async def get_current_user(token: str = Depends(oauth2_scheme)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -81,6 +113,9 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         user = db.query(schema.User).filter(schema.User.id == int(user_id)).first()
         if user is None:
             raise credentials_exception
+
+        # Enforce instance owner pinning on every authenticated request
+        verify_instance_owner(user)
         return user
     finally:
         db.close()

@@ -30,8 +30,33 @@ os.makedirs(public_dir, exist_ok=True)
 app.mount("/public", StaticFiles(directory=public_dir), name="public")
 
 
+def validate_critical_environment():
+    missing = []
+    if not config.GOOGLE_CLIENT_ID:
+        missing.append("GOOGLE_CLIENT_ID")
+    if not config.JWT_SECRET:
+        missing.append("JWT_SECRET")
+
+    if missing:
+        formatted = "\n".join(f"   ❌ {var}" for var in missing)
+        box = (
+            "\n" + "!" * 70 + "\n"
+            "FATAL STARTUP ERROR: Missing required configuration variables:\n"
+            f"{formatted}\n\n"
+            "ENO cannot authenticate users or sign security tokens without these variables.\n"
+            "Action required: Create or update your .env file in the ENO root directory.\n"
+            "Example:\n"
+            '  GOOGLE_CLIENT_ID="your-client-id.apps.googleusercontent.com"\n'
+            '  JWT_SECRET="your-secure-random-secret"\n'
+            + "!" * 70 + "\n"
+        )
+        print(box, file=sys.stderr)
+        sys.exit(1)
+
+
 @app.on_event("startup")
 async def on_startup():
+    validate_critical_environment()
     print(f"ENO starting (mode={config.ENO_MODE}, llm_backend={config.LLM_BACKEND})")
     print("Initializing Database...")
     init_db()

@@ -172,6 +172,8 @@ class ConversationEngine:
         prompt = None
         chat_messages = None
 
+        FORMATTING_REMINDER = "\n\n[DIRECTIVE: Write your reply first, then conclude on a new line with [MOOD: <Mood> | NAME: Eno]]"
+
         if use_remote:
             sys_text = system_prompt
             if identity_prefix:
@@ -181,6 +183,8 @@ class ConversationEngine:
                 content = augmented_message if i == len(window) - 1 and mem["role"] == "user" else mem["content"]
                 if mem["role"] == "user":
                     content = state_manager.sanitize_prompt_for_llm(content)
+                    if i == len(window) - 1:
+                        content += FORMATTING_REMINDER
                 chat_messages.append({"role": mem["role"], "content": content})
         elif model_type == "standard":
             prompt = ""
@@ -195,7 +199,7 @@ class ConversationEngine:
 
                 # Inject system prompt into the FINAL user message to maximize attention for Gemma
                 if i == len(window) - 1 and role == "user":
-                    content = f"{system_prompt}\n\n[USER]: {content}"
+                    content = f"{system_prompt}\n\n[USER]: {content}{FORMATTING_REMINDER}"
 
                 prompt += f"<start_of_turn>{role}\n{content}<end_of_turn>\n"
 
@@ -210,6 +214,10 @@ class ConversationEngine:
                 if role == "user":
                     content = state_manager.sanitize_prompt_for_llm(content)
                 # ---------------------------------------------------
+
+                # Re-inject formatting reminder on the final user turn for Qwen to prevent multi-turn drift
+                if i == len(window) - 1 and role == "user":
+                    content = f"{content}{FORMATTING_REMINDER}"
 
                 prompt += f"<|im_start|>{role}\n{content}<|im_end|>\n"
             prompt += "<|im_start|>assistant\n"
@@ -233,6 +241,12 @@ class ConversationEngine:
                     name = match.group(2).strip()
                 clean = (text[:match.start()] + text[match.end():]).strip()
             
+            # Option A: In default mode, lock name strictly to 'Eno'
+            if not active_persona:
+                name = "Eno"
+            else:
+                name = name or "Persona"
+
             # Remove generic system note hallucinations
             clean = re.sub(r'\[(?:System Note|CRITICAL).*?\]\s*', '', clean, flags=re.IGNORECASE).strip()
             return clean, mood, name
@@ -303,7 +317,7 @@ class ConversationEngine:
                 clean_tail = "..."
                 
         if mood:
-            yield {"type": "mood", "content": mood, "name": name or "Persona"}
+            yield {"type": "mood", "content": mood, "name": name or ("Eno" if not active_persona else "Persona")}
             
         if clean_tail:
             yield {"type": "token", "content": clean_tail}

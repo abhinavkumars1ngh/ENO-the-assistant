@@ -57,8 +57,17 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db:
 @router.post("/auth/sync")
 def sync_oauth_user(data: GoogleAuthSync, db: Session = Depends(get_db)):
     """Verifies a Google ID token, creates the account row on first sign-in, and returns a JWT."""
+    from backend.core.auth import get_instance_owner, set_instance_owner
+
     claims = verify_google_id_token(data.id_token)
     email = claims["email"].lower()
+
+    owner = get_instance_owner()
+    if owner["owner_email"] and owner["owner_email"] != email:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Forbidden: This running ENO instance is pinned to {owner['owner_email']}.",
+        )
 
     user = db.query(User).filter(User.email == email).first()
     if not user:
@@ -66,6 +75,9 @@ def sync_oauth_user(data: GoogleAuthSync, db: Session = Depends(get_db)):
         db.add(user)
         db.commit()
         db.refresh(user)
+
+    if owner["owner_id"] is None:
+        set_instance_owner(user.id, email)
 
     return _session_payload(user)
 
