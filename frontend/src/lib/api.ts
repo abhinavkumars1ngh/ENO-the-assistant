@@ -1,9 +1,25 @@
+export function getApiUrl(): string {
+  if (typeof window !== "undefined") {
+    const saved = localStorage.getItem("eno_host_endpoint");
+    if (saved && saved.startsWith("http")) return saved.replace(/\/+$/, "");
+  }
+  return (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
+}
+
+export function getWsUrl(): string {
+  if (typeof window !== "undefined") {
+    const saved = localStorage.getItem("eno_host_endpoint");
+    if (saved && saved.startsWith("http")) return saved.replace(/^http/, "ws").replace(/\/+$/, "");
+  }
+  return (process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000").replace(/\/+$/, "");
+}
+
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 export const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
 
 export const getHeaders = (token: string): Record<string, string> => ({
   // Only needed when tunnelling through ngrok (local dev); a custom header forces a CORS preflight otherwise.
-  ...(API_URL.includes("ngrok") ? { "ngrok-skip-browser-warning": "true" } : {}),
+  ...(getApiUrl().includes("ngrok") ? { "ngrok-skip-browser-warning": "true" } : {}),
   ...(token ? { Authorization: `Bearer ${token}` } : {}),
 });
 
@@ -38,7 +54,7 @@ export interface Account {
 
 export async function fetchAccount(token: string): Promise<Account | null> {
   try {
-    const res = await fetch(`${API_URL}/api/me`, { headers: getHeaders(token) });
+    const res = await fetch(`${getApiUrl()}/api/me`, { headers: getHeaders(token) });
     if (!res.ok) return null;
     return (await res.json()) as Account;
   } catch {
@@ -48,7 +64,7 @@ export async function fetchAccount(token: string): Promise<Account | null> {
 
 export async function fetchPlans(): Promise<{ plans: PlanInfo[]; razorpay_enabled: boolean; test_mode: boolean } | null> {
   try {
-    const res = await fetch(`${API_URL}/api/plans`, { headers: getHeaders("") });
+    const res = await fetch(`${getApiUrl()}/api/plans`, { headers: getHeaders("") });
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -72,9 +88,13 @@ export interface EndpointInfo {
 
 export async function fetchMyEndpoint(token: string): Promise<EndpointInfo | null> {
   try {
-    const res = await fetch(`${API_URL}/api/my-endpoint`, { headers: getHeaders(token) });
+    const res = await fetch(`${getApiUrl()}/api/my-endpoint`, { headers: getHeaders(token) });
     if (!res.ok) return null;
-    return (await res.json()) as EndpointInfo;
+    const data = (await res.json()) as EndpointInfo;
+    if (data?.endpoint_url && typeof window !== "undefined") {
+      localStorage.setItem("eno_host_endpoint", data.endpoint_url);
+    }
+    return data;
   } catch {
     return null;
   }

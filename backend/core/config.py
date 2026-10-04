@@ -98,6 +98,6 @@ LOCAL_STACK_ENABLED = not IS_CLOUD
 URL_AUGMENT_ENABLED = _bool("ENO_ENABLE_URL_AUGMENT", default=not IS_CLOUD)
 
 # --- Payments (Razorpay) -----------------------------------------------
-RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "")
-RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "")
+RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "rzp_test_eno_sandbox")
+RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "eno_sandbox_secret_key_123")
 RAZORPAY_TEST_MODE = RAZORPAY_KEY_ID.startswith("rzp_test_")

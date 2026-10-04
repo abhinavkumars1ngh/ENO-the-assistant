@@ -13,7 +13,7 @@ import "katex/dist/katex.min.css";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import TextareaAutosize from "react-textarea-autosize";
-import { API_URL, WS_URL, getHeaders, fetchAccount, fetchMyEndpoint, type Account, type EndpointInfo } from "@/lib/api";
+import { API_URL, WS_URL, getApiUrl, getWsUrl, getHeaders, fetchAccount, fetchMyEndpoint, type Account, type EndpointInfo } from "@/lib/api";
 import { listChats, getChat, saveChat, deleteChat as deleteVaultChat, requestPersistentStorage, type ChatSummary, type VaultMessage } from "@/lib/vaultDb";
 import PlanCards from "@/components/PlanCards";
 import VaultPanel from "@/components/VaultPanel";
@@ -143,7 +143,7 @@ function PdfUploader({ apiToken }: { apiToken: string }) {
     formData.append("title", file.name);
 
     try {
-      const res = await fetch(`${API_URL}/api/ingest/pdf`, {
+      const res = await fetch(`${getApiUrl()}/api/ingest/pdf`, {
         method: "POST",
         body: formData,
         headers: getHeaders(apiToken)
@@ -458,12 +458,15 @@ export default function Home() {
       if (isUnmounted) return;
       if (wsRef.current) wsRef.current.close();
       
-      let targetWs = WS_URL;
+      let targetWs = getWsUrl();
       try {
         const ep = await fetchMyEndpoint(apiToken);
         if (ep && ep.status === "online" && ep.endpoint_url) {
           setDiscoveredHostUrl(ep.endpoint_url);
           targetWs = ep.endpoint_url.replace(/^http/, "ws");
+          if (typeof window !== "undefined") {
+            localStorage.setItem("eno_host_endpoint", ep.endpoint_url);
+          }
         }
       } catch {
         // Fallback to static WS_URL
@@ -614,7 +617,7 @@ export default function Home() {
         formData.append("file", file);
         formData.append("chat_id", currentChatId!);
         try {
-          const res = await fetch(`${API_URL}/api/ingest/chat_file`, {
+          const res = await fetch(`${getApiUrl()}/api/ingest/chat_file`, {
             method: "POST",
             body: formData,
             headers: getHeaders(apiToken)
@@ -684,7 +687,7 @@ export default function Home() {
           const formData = new FormData();
           formData.append("file", audioBlob, "audio.webm");
 
-          const res = await fetch(`${API_URL}/api/transcribe`, {
+          const res = await fetch(`${getApiUrl()}/api/transcribe`, {
             headers: getHeaders(apiToken),
             method: "POST",
             body: formData,
@@ -1163,10 +1166,16 @@ export default function Home() {
           </div>
           <div className="flex justify-between items-center py-2 border-b border-white/5">
             <span>Connection Status</span>
-            <span className={`px-2 py-1 rounded ${isConnected ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"}`}>
+            <span className={`px-2 py-1 rounded font-medium text-xs ${isConnected ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"}`}>
               {isConnected ? "Online" : "Offline"}
             </span>
           </div>
+          {discoveredHostUrl && (
+            <div className="flex justify-between items-center py-2 border-b border-white/5 text-xs">
+              <span className="text-zinc-400">Host Endpoint</span>
+              <span className="font-mono text-indigo-300 truncate max-w-[200px]" title={discoveredHostUrl}>{discoveredHostUrl}</span>
+            </div>
+          )}
           <p className="text-xs text-zinc-500 leading-relaxed pt-1">
             <b className="text-zinc-400">Install on your phone:</b> iPhone: Share &rarr; Add to Home Screen. Android: menu &rarr; Install app. Installing also stops
             iOS from clearing your on-device chats after a week of inactivity.
