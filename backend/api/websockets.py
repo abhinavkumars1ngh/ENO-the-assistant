@@ -2,7 +2,7 @@ import time
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from backend.core.auth import get_current_user
+from backend.core.auth import get_current_user, verify_instance_owner
 from backend.core.conversation import conversation_engine
 from backend.core.database import SessionLocal
 from backend.core.usage import check_chat_allowed, record_usage
@@ -29,6 +29,8 @@ async def websocket_endpoint(websocket: WebSocket, chat_id: str, token: str = No
 
     try:
         user = await get_current_user(token)
+        # Always enforce strict single-owner pinning on the inference websocket
+        verify_instance_owner(user, force_enforce=True)
     except Exception:
         await websocket.close(code=1008)
         return

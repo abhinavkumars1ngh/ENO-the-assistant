@@ -4,6 +4,16 @@ import sys
 import time
 import os
 
+base_dir = os.path.abspath(os.path.dirname(__file__))
+env_file = os.path.join(base_dir, ".env")
+if os.path.isfile(env_file):
+    with open(env_file, "r") as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, _, v = line.partition("=")
+                os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
 processes = []
 
 def cleanup(signum, frame):
@@ -140,13 +150,15 @@ def register_endpoint_and_heartbeat(base_dir, python_bin, endpoint_url):
             break
         time.sleep(2)
 
+    host_key = os.getenv("HOST_REGISTRY_KEY", "")
+
     # Register with all targets
     for name, api_url in registry_targets:
         payload = json.dumps({
             "endpoint_url": endpoint_url,
             "owner_type": "user",
             "owner_email": owner_email,
-            "host_key": "eno-host-registry-sync-key-2026",
+            "host_key": host_key,
         }).encode("utf-8")
         headers = {
             "Content-Type": "application/json",
@@ -169,7 +181,7 @@ def register_endpoint_and_heartbeat(base_dir, python_bin, endpoint_url):
         heartbeat_payload = json.dumps({
             "owner_type": "user",
             "owner_email": owner_email,
-            "host_key": "eno-host-registry-sync-key-2026",
+            "host_key": host_key,
         }).encode("utf-8")
         headers = {
             "Content-Type": "application/json",

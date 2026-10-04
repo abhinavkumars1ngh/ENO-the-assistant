@@ -228,15 +228,17 @@ def register_endpoint(
         raise HTTPException(status_code=400, detail="Invalid endpoint URL: must start with http:// or https://")
 
     target_owner_id = None
-    # 1. Authorize via host_key + owner_email (for headless Mac background sync)
-    if req.host_key and (req.host_key == config.HOST_REGISTRY_KEY or req.host_key == config.JWT_SECRET) and req.owner_email:
+    # 1. Authorize via tightened host_key + owner_email:
+    # Requires HOST_REGISTRY_KEY to be set in environment, timing-safe matching,
+    # AND owner_email MUST match an already-authenticated user on file (no arbitrary emails or account creation!).
+    if req.host_key and config.HOST_REGISTRY_KEY and hmac.compare_digest(req.host_key, config.HOST_REGISTRY_KEY) and req.owner_email:
         email = req.owner_email.strip().lower()
         user = db.query(User).filter(User.email == email).first()
         if not user:
-            user = User(email=email, role="user", plan="free", public_id=uuid.uuid4().hex)
-            db.add(user)
-            db.commit()
-            db.refresh(user)
+            raise HTTPException(
+                status_code=403,
+                detail="Forbidden: No authenticated user session exists for this email. Sign in first.",
+            )
         target_owner_id = user.id
     # 2. Authorize via Bearer session token
     elif authorization and authorization.startswith("Bearer "):
@@ -245,18 +247,22 @@ def register_endpoint(
         try:
             payload = jwt.decode(token, config.JWT_SECRET, algorithms=[config.JWT_ALGORITHM])
             user_id = payload.get("sub")
-            if user_id:
+            email = payload.get("email")
+            user = None
+            if user_id and str(user_id).isdigit():
                 user = db.query(User).filter(User.id == int(user_id)).first()
-                if user:
-                    if req.owner_type == "user":
-                        target_owner_id = user.id
-                    elif req.owner_type == "org":
-                        if not req.org_id:
-                            raise HTTPException(status_code=400, detail="org_id is required when owner_type is 'org'")
-                        membership = db.query(OrgMember).filter(OrgMember.org_id == req.org_id, OrgMember.user_id == user.id).first()
-                        if not membership:
-                            raise HTTPException(status_code=403, detail="Forbidden: You are not a member of this organization")
-                        target_owner_id = req.org_id
+            if not user and email:
+                user = db.query(User).filter(User.email == email.strip().lower()).first()
+            if user:
+                if req.owner_type == "user":
+                    target_owner_id = user.id
+                elif req.owner_type == "org":
+                    if not req.org_id:
+                        raise HTTPException(status_code=400, detail="org_id is required when owner_type is 'org'")
+                    membership = db.query(OrgMember).filter(OrgMember.org_id == req.org_id, OrgMember.user_id == user.id).first()
+                    if not membership:
+                        raise HTTPException(status_code=403, detail="Forbidden: You are not a member of this organization")
+                    target_owner_id = req.org_id
         except (JWTError, ValueError):
             pass
 
@@ -302,14 +308,11 @@ def heartbeat_endpoint(
     owner_type = req.owner_type if req else "user"
     target_owner_id = None
 
-    if req and req.host_key and (req.host_key == config.HOST_REGISTRY_KEY or req.host_key == config.JWT_SECRET) and req.owner_email:
+    if req and req.host_key and config.HOST_REGISTRY_KEY and hmac.compare_digest(req.host_key, config.HOST_REGISTRY_KEY) and req.owner_email:
         email = req.owner_email.strip().lower()
         user = db.query(User).filter(User.email == email).first()
         if not user:
-            user = User(email=email, role="user", plan="free", public_id=uuid.uuid4().hex)
-            db.add(user)
-            db.commit()
-            db.refresh(user)
+            raise HTTPException(status_code=403, detail="Forbidden: No authenticated user session exists for this email.")
         target_owner_id = user.id
     elif authorization and authorization.startswith("Bearer "):
         token = authorization.split("Bearer ", 1)[1].strip()
@@ -317,10 +320,14 @@ def heartbeat_endpoint(
         try:
             payload = jwt.decode(token, config.JWT_SECRET, algorithms=[config.JWT_ALGORITHM])
             user_id = payload.get("sub")
-            if user_id:
+            email = payload.get("email")
+            user = None
+            if user_id and str(user_id).isdigit():
                 user = db.query(User).filter(User.id == int(user_id)).first()
-                if user:
-                    target_owner_id = user.id
+            if not user and email:
+                user = db.query(User).filter(User.email == email.strip().lower()).first()
+            if user:
+                target_owner_id = user.id
         except (JWTError, ValueError):
             pass
 
@@ -334,16 +341,9 @@ def heartbeat_endpoint(
     ).first()
 
     if not endpoint:
-        endpoint = HostEndpoint(
-            owner_id=target_owner_id,
-            owner_type=owner_type,
-            endpoint_url=None,
-            last_heartbeat=now,
-        )
-        db.add(endpoint)
-    else:
-        endpoint.last_heartbeat = now
+        raise HTTPException(status_code=404, detail="No endpoint registered for this owner")
 
+    endpoint.last_heartbeat = now
     db.commit()
     return {"status": "alive", "last_heartbeat": now.isoformat()}
 
@@ -361,7 +361,7 @@ def get_my_endpoint(
     """
     target_user = None
 
-    if host_key and (host_key == config.HOST_REGISTRY_KEY or host_key == config.JWT_SECRET) and owner_email:
+    if host_key and config.HOST_REGISTRY_KEY and hmac.compare_digest(host_key, config.HOST_REGISTRY_KEY) and owner_email:
         target_user = db.query(User).filter(User.email == owner_email.strip().lower()).first()
     elif authorization and authorization.startswith("Bearer "):
         token = authorization.split("Bearer ", 1)[1].strip()
@@ -369,8 +369,11 @@ def get_my_endpoint(
         try:
             payload = jwt.decode(token, config.JWT_SECRET, algorithms=[config.JWT_ALGORITHM])
             user_id = payload.get("sub")
-            if user_id:
+            email = payload.get("email")
+            if user_id and str(user_id).isdigit():
                 target_user = db.query(User).filter(User.id == int(user_id)).first()
+            if not target_user and email:
+                target_user = db.query(User).filter(User.email == email.strip().lower()).first()
         except (JWTError, ValueError):
             pass
 

@@ -35,6 +35,8 @@ services:
         sync: false          # rzp_test_...
       - key: RAZORPAY_KEY_SECRET
         sync: false
+      - key: HOST_REGISTRY_KEY
+        sync: false
 
 databases:
   - name: eno-db

@@ -34,7 +34,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
 
 def default_token_for(user: schema.User) -> str:
     return create_access_token(
-        data={"sub": str(user.id)},
+        data={"sub": str(user.id), "email": getattr(user, "email", "")},
         expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
     )
 
@@ -68,8 +68,8 @@ _instance_owner_email: Optional[str] = None
 
 
 def get_instance_owner() -> dict:
-    from backend.core.config import IS_CLOUD
-    if IS_CLOUD:
+    from backend.core.config import IS_CLOUD, LLM_BACKEND
+    if IS_CLOUD and LLM_BACKEND != "mlx":
         return {"owner_id": None, "owner_email": None}
     return {
         "owner_id": _instance_owner_id,
@@ -77,9 +77,10 @@ def get_instance_owner() -> dict:
     }
 
 
-def set_instance_owner(user_id: int, email: str = ""):
-    from backend.core.config import IS_CLOUD
-    if IS_CLOUD:
+def set_instance_owner(user_id: int, email: str = "", force_enforce: bool = False):
+    from backend.core.config import IS_CLOUD, LLM_BACKEND
+    is_inference_machine = (LLM_BACKEND == "mlx") or force_enforce
+    if IS_CLOUD and not is_inference_machine:
         return
     global _instance_owner_id, _instance_owner_email
     if _instance_owner_id is None:
@@ -88,13 +89,14 @@ def set_instance_owner(user_id: int, email: str = ""):
         print(f"[Eno Auth] Instance owner pinned to user_id={user_id} ({email})")
 
 
-def verify_instance_owner(user: schema.User):
-    from backend.core.config import IS_CLOUD
-    if IS_CLOUD:
+def verify_instance_owner(user: schema.User, force_enforce: bool = False):
+    from backend.core.config import IS_CLOUD, LLM_BACKEND
+    is_inference_machine = (LLM_BACKEND == "mlx") or force_enforce
+    if IS_CLOUD and not is_inference_machine:
         return
     global _instance_owner_id
     if _instance_owner_id is None:
-        set_instance_owner(user.id, getattr(user, "email", ""))
+        set_instance_owner(user.id, getattr(user, "email", ""), force_enforce=force_enforce)
         return
     if _instance_owner_id != user.id:
         raise HTTPException(

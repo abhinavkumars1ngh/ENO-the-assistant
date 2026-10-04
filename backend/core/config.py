@@ -103,4 +103,4 @@ RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "eno_sandbox_secret_key_1
 RAZORPAY_TEST_MODE = RAZORPAY_KEY_ID.startswith("rzp_test_")
 
 # --- Host Endpoint Registry Sync ---------------------------------------
-HOST_REGISTRY_KEY = os.getenv("HOST_REGISTRY_KEY", "eno-host-registry-sync-key-2026")
+HOST_REGISTRY_KEY = os.getenv("HOST_REGISTRY_KEY", "")
